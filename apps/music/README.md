@@ -8,7 +8,12 @@ Plays MP3, FLAC, OGG Vorbis, WAV and AAC/M4A (decoded in pure Rust by Symphonia)
 subfolders included, in path order. Runs on **MinUI** (Miyoo Mini+) and **muOS**
 (RG35XX-SP).
 
-![Music](../../docs/screenshots/music.png)
+![Classic](../../docs/screenshots/music.png)
+![Sakura](../../docs/screenshots/music-sakura.png)
+![Midnight](../../docs/screenshots/music-midnight.png)
+
+Five colour themes, switched with L2 / R2: **Classic**, **Sakura** (pink), **Midnight**
+(dark), **Amber** (warm retro) and **Ocean** (teal), defined in `src/theme.rs`.
 
 | Platform | Music folder | Install |
 |---|---|---|
@@ -27,8 +32,9 @@ subfolders included, in path order. Runs on **MinUI** (Miyoo Mini+) and **muOS**
 | Left / Right | arrows | seek -5 s / +5 s (hold to keep seeking) |
 | X | C | shuffle on / off |
 | Y | V | repeat: off / all / one |
+| L2 / R2 | E / R | previous / next colour theme |
 | SELECT | Tab | jump to the playing track |
-| MENU | Esc | quit (shuffle, repeat and the last track are remembered) |
+| MENU | Esc | quit (shuffle, repeat, theme and the last track are remembered) |
 
 Volume is the system volume (the device's VOL+/- buttons); the slider follows it (MinUI's
 shared settings on the Mini, PipeWire on muOS). The screen turns off after the idle time

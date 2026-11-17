@@ -7,9 +7,17 @@ and downloader, a music player, a Wi-Fi picker, a settings app and a virtual pet
 <img src="docs/screenshots/browser-home.png" width="320" alt="Web Browser home">
 <img src="docs/screenshots/browser-page.png" width="320" alt="Web Browser page">
 <img src="docs/screenshots/music.png" width="320" alt="Music">
+<img src="docs/screenshots/music-sakura.png" width="320" alt="Music, Sakura theme">
 <img src="docs/screenshots/wifi.png" width="320" alt="Wifi">
 <img src="docs/screenshots/settings.png" width="320" alt="Settings">
 <img src="docs/screenshots/pocket-pet.png" width="320" alt="Pocket Pet">
+</p>
+
+On muOS the apps take on a muOS-style look (header and footer bars, mustard highlight):
+
+<p>
+<img src="docs/screenshots/browser-home-muos.png" width="320" alt="Web Browser on muOS">
+<img src="docs/screenshots/browser-page-muos.png" width="320" alt="Web Browser page on muOS">
 </p>
 
 ## Apps and devices
@@ -17,7 +25,7 @@ and downloader, a music player, a Wi-Fi picker, a settings app and a virtual pet
 | App | Miyoo Mini+ (MinUI) | RG35XX-SP (muOS) |
 |---|:---:|:---:|
 | [Web Browser](apps/web-browser) — text pages, links, HTTPS, downloads | ✓ | ✓ |
-| [Music](apps/music) — MP3/FLAC/OGG/WAV/M4A, playlist, spectrum analyzer | ✓ | ✓ |
+| [Music](apps/music) — MP3/FLAC/OGG/WAV/M4A, playlist, spectrum analyzer, 5 themes | ✓ | ✓ |
 | [Wifi](apps/wifi) — pick a network, type the password | ✓ | (muOS has its own) |
 | [Settings](apps/settings) — screen-off time, brightness, Wi-Fi/ADB at startup | ✓ | (muOS has its own) |
 | [Pocket Pet](apps/pocket-pet) — a tiny virtual pet | ✓ | |
