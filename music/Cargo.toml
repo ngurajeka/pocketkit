@@ -1,0 +1,27 @@
+[package]
+name = "music"
+version = "0.1.0"
+edition = "2021"
+description = "Music player with a classic desktop-player look, for the Miyoo Mini+ (MinUI)"
+
+[dependencies]
+minui_common = { path = "../common" }
+# Pure-Rust decoders: no C, so they cross-compile like everything else.
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "flac", "vorbis", "ogg", "wav", "pcm", "aac", "isomp4"] }
+
+[build-dependencies]
+cc = "1"
+
+[features]
+default = ["desktop"]
+# Desktop preview: window via minui_common, audio piped to pw-play/paplay/aplay.
+desktop = ["minui_common/desktop"]
+# Miyoo Mini: audio through the vendor MI_AO library (needs the Miyoo toolchain).
+device = []
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
