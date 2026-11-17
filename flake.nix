@@ -33,10 +33,15 @@
             packages = [ rust pkgs.pkg-config ] ++ desktopLibs;
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath desktopLibs;
             # package.sh: plain cargo + rust-lld against Rust's bundled (self-contained)
-            # musl — no Docker/cross, no zig, no C cross toolchain. Only valid while a
-            # pak has no C dependencies; otherwise add a musl cross cc here.
+            # musl — no Docker/cross, no zig, no full C cross toolchain.
             BUILD_CMD = "cargo build";
             CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER = "rust-lld";
+            # Bare clang for crates with small, libc-free C parts (e.g. ring, used by
+            # rustls for HTTPS). There are no musl headers here, so C code that
+            # #includes libc headers still won't build.
+            CC_armv7_unknown_linux_musleabihf = "${pkgs.llvmPackages.clang-unwrapped}/bin/clang";
+            CFLAGS_armv7_unknown_linux_musleabihf = "--target=armv7-unknown-linux-musleabihf";
+            AR_armv7_unknown_linux_musleabihf = "${pkgs.llvmPackages.llvm}/bin/llvm-ar";
           };
         });
     };
