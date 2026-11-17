@@ -76,10 +76,7 @@ impl Device {
             .unwrap_or(PANEL_W * bytes_per_pixel);
 
         if !(2..=4).contains(&bytes_per_pixel) || W * SCALE * bytes_per_pixel > stride {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("unsupported framebuffer: {bpp} bpp, stride {stride}"),
-            ));
+            return Err(io::Error::other(format!("unsupported framebuffer: {bpp} bpp, stride {stride}")));
         }
         eprintln!("framebuffer: {bpp} bpp, stride {stride}");
 
@@ -105,7 +102,7 @@ impl Platform for Device {
         loop {
             match self.input.read(&mut buf) {
                 Ok(n) if n > 0 => {
-                    for ev in buf[..n].chunks_exact(EVENT_SIZE) {
+                    for ev in buf[..n].as_chunks::<EVENT_SIZE>().0 {
                         let o = EVENT_SIZE - 8; // type, code, value are the last 8 bytes
                         let kind = u16::from_le_bytes([ev[o], ev[o + 1]]);
                         let code = u16::from_le_bytes([ev[o + 2], ev[o + 3]]);
