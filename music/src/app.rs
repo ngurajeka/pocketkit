@@ -9,6 +9,8 @@ use std::{
 
 use minui_common::{
     input::Button,
+    minui,
+    settings::{self, Settings},
     render::{fit, Canvas, W},
 };
 
@@ -23,7 +25,8 @@ use crate::{
 
 const BANDS: usize = 20;
 const SEEK_STEP: f64 = 5.0;
-const VOLUME_STEP: u32 = 5;
+/// How often the system volume is re-read (it changes outside this app).
+const VOLUME_POLL_SECS: f32 = 0.2;
 const FLASH_SECS: f32 = 2.5;
 
 // Layout (640x480).
@@ -39,18 +42,30 @@ const MARQUEE: (i32, i32, i32, i32) = (244, 24, 386, 24);
 pub struct Config {
     pub music_dir: PathBuf,
     pub state_path: PathBuf,
+    /// MinUI's shared settings, for the system volume.
+    pub settings_path: PathBuf,
 }
 
 impl Config {
-    /// `MUSIC_DIR` and `MUSIC_STATE` (both set by launch.sh). On a desktop the
-    /// defaults are ~/Music (or ./music) and ./state.txt.
+    /// The music folder is `MUSIC_DIR` if set, else the `music_dir` setting
+    /// (Settings.pak), else `$SDCARD_PATH/Music` on the device, else ~/Music (or
+    /// ./music) on a desktop. `MUSIC_STATE` is set by launch.sh (default
+    /// ./state.txt); `MINUI_SETTINGS` overrides where the system volume is read.
     pub fn from_env() -> Self {
-        let music_dir = env::var_os("MUSIC_DIR").map(PathBuf::from).unwrap_or_else(|| {
-            let home = env::var_os("HOME").map(|h| PathBuf::from(h).join("Music"));
-            home.filter(|p| p.is_dir()).unwrap_or_else(|| PathBuf::from("music"))
-        });
+        let configured = Settings::load(&settings::default_path()).get(settings::MUSIC_DIR).map(PathBuf::from);
+        let music_dir = env::var_os("MUSIC_DIR")
+            .map(PathBuf::from)
+            .or(configured)
+            .or_else(|| env::var_os("SDCARD_PATH").map(|sd| PathBuf::from(sd).join("Music")))
+            .unwrap_or_else(|| {
+                let home = env::var_os("HOME").map(|h| PathBuf::from(h).join("Music"));
+                home.filter(|p| p.is_dir()).unwrap_or_else(|| PathBuf::from("music"))
+            });
+        let _ = fs::create_dir_all(&music_dir);
         let state_path = env::var_os("MUSIC_STATE").map_or_else(|| PathBuf::from("state.txt"), PathBuf::from);
-        Self { music_dir, state_path }
+        let settings_path =
+            env::var_os("MINUI_SETTINGS").map_or_else(minui::shared_path, PathBuf::from);
+        Self { music_dir, state_path, settings_path }
     }
 }
 
@@ -76,6 +91,10 @@ pub struct App {
     player: Player,
     music_dir: PathBuf,
     state_path: PathBuf,
+    settings_path: PathBuf,
+    /// MinUI's volume (0-20); `None` outside MinUI.
+    pub system_volume: Option<u32>,
+    volume_poll: f32,
     bars: [f32; BANDS],
     peaks: [f32; BANDS],
     peak_hold: [f32; BANDS],
@@ -92,7 +111,6 @@ impl App {
         let tracks = library::scan(&config.music_dir);
         let saved = fs::read_to_string(&config.state_path).unwrap_or_default();
         let get = |key: &str| saved.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix('=')).map(str::trim);
-        let volume = get("volume").and_then(|v| v.parse().ok()).unwrap_or(70);
         let last = get("track").map(|t| config.music_dir.join(t));
         let seed = SystemTime::now().duration_since(UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64);
         let mut app = Self {
@@ -108,9 +126,13 @@ impl App {
                 _ => Repeat::Off,
             },
             rng: Rng::new(seed),
-            player: Player::spawn(sink, volume),
+            // Full scale: loudness is the system volume (VOL+/-), like everywhere in MinUI.
+            player: Player::spawn(sink, 100),
+            system_volume: minui::read_volume(&config.settings_path),
+            volume_poll: 0.0,
             music_dir: config.music_dir,
             state_path: config.state_path,
+            settings_path: config.settings_path,
             bars: [0.0; BANDS],
             peaks: [0.0; BANDS],
             peak_hold: [0.0; BANDS],
@@ -130,10 +152,6 @@ impl App {
 
     pub fn position(&self) -> f64 {
         self.player.shared.position()
-    }
-
-    pub fn volume(&self) -> u32 {
-        self.player.shared.volume()
     }
 
     pub fn flash(&mut self, msg: impl Into<String>) {
@@ -158,8 +176,7 @@ impl App {
             Repeat::One => "one",
         };
         let text = format!(
-            "volume={}\nshuffle={}\nrepeat={repeat}\ntrack={track}\n",
-            self.volume(),
+            "shuffle={}\nrepeat={repeat}\ntrack={track}\n",
             self.shuffle as u8
         );
         if let Some(dir) = self.state_path.parent() {
@@ -256,8 +273,6 @@ impl App {
             }
             Button::Left => self.seek_by(-SEEK_STEP),
             Button::Right => self.seek_by(SEEK_STEP),
-            Button::L2 => self.player.shared.set_volume(self.volume().saturating_sub(VOLUME_STEP)),
-            Button::R2 => self.player.shared.set_volume(self.volume() + VOLUME_STEP),
             Button::X => {
                 self.shuffle = !self.shuffle;
                 self.flash(if self.shuffle { "Shuffle on" } else { "Shuffle off" });
@@ -291,6 +306,11 @@ impl App {
         }
         if self.pressed.as_ref().is_some_and(|p| p.1 <= 0.0) {
             self.pressed = None;
+        }
+        self.volume_poll -= dt;
+        if self.volume_poll <= 0.0 {
+            self.volume_poll = VOLUME_POLL_SECS;
+            self.system_volume = minui::read_volume(&self.settings_path);
         }
 
         while let Ok(ev) = self.player.events.try_recv() {
@@ -419,7 +439,8 @@ impl App {
 
         // Volume, shuffle, repeat.
         c.text(244, 62, "VOL", 1, skin::FACE_TEXT);
-        skin::slider(c, 274, 56, 164, 18, Some(self.volume() as f32 / 100.0), true);
+        let vol_frac = self.system_volume.map(|v| v as f32 / minui::VOLUME_MAX as f32);
+        skin::slider(c, 274, 56, 164, 18, vol_frac, true);
         self.toggle(c, 450, 54, 84, "SHUFFLE", self.shuffle);
         let rep = match self.repeat {
             Repeat::One => "REPEAT 1",
@@ -433,7 +454,10 @@ impl App {
             None => format!("{} tracks", self.tracks.len()),
         };
         c.text(244, 90, &count, 1, skin::FACE_TEXT_DIM);
-        let vol = format!("Volume {}%", self.volume());
+        let vol = match self.system_volume {
+            Some(v) => format!("Volume {v}/{}", minui::VOLUME_MAX),
+            None => "Volume --".to_string(),
+        };
         c.text(630 - 8 * vol.len() as i32, 90, &vol, 1, skin::FACE_TEXT_DIM);
 
         // Seek bar.
@@ -455,7 +479,7 @@ impl App {
         }
         let hints = [
             "A play   START pause   B stop",
-            "L1/R1 track  </> seek  L2/R2 vol",
+            "L1/R1 track  </> seek  VOL+/- vol",
         ];
         for (i, h) in hints.iter().enumerate() {
             c.text(310, 150 + i as i32 * 14, &fit(h, 40), 1, skin::FACE_TEXT_DIM);
@@ -561,8 +585,11 @@ mod tests {
         let dir = env::temp_dir().join(format!("music_app_{}_{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         music_dir_with_wavs(&dir.join("lib"), files, secs);
-        let config = Config { music_dir: dir.join("lib"), state_path: dir.join("state.txt") };
-        (App::new(config, Box::new(NullSink::new(false))), dir)
+        (App::new(config(&dir, "state.txt"), Box::new(NullSink::new(false))), dir)
+    }
+
+    fn config(dir: &Path, state: &str) -> Config {
+        Config { music_dir: dir.join("lib"), state_path: dir.join(state), settings_path: dir.join("SharedSettings") }
     }
 
     fn wait(app: &mut App, done: impl Fn(&App) -> bool) {
@@ -594,18 +621,34 @@ mod tests {
         app.handle(Button::Y);
         assert_eq!(app.repeat, Repeat::One);
         app.handle(Button::X);
-        app.handle(Button::L2);
         app.handle(Button::Down);
         app.handle(Button::A);
         // Plays b, then b again (repeat one), never a.
         wait(&mut app, |a| a.info.is_some());
-        app.player.shared.set_volume(40);
         app.save_state();
         let saved = fs::read_to_string(dir.join("state.txt")).unwrap();
-        assert!(saved.contains("volume=40") && saved.contains("shuffle=1") && saved.contains("repeat=one") && saved.contains("track=b.wav"), "{saved}");
-        let again = App::new(Config { music_dir: dir.join("lib"), state_path: dir.join("state.txt") }, Box::new(NullSink::new(false)));
-        assert_eq!((again.sel, again.volume(), again.shuffle, again.repeat), (1, 40, true, Repeat::One));
+        assert!(saved.contains("shuffle=1") && saved.contains("repeat=one") && saved.contains("track=b.wav"), "{saved}");
+        let again = App::new(config(&dir, "state.txt"), Box::new(NullSink::new(false)));
+        assert_eq!((again.sel, again.shuffle, again.repeat), (1, true, Repeat::One));
         app.handle(Button::B);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn follows_the_system_volume() {
+        let (mut app, dir) = app("volume", &["a.wav"], 0.1);
+        assert_eq!(app.system_volume, None); // not running under MinUI
+        fs::write(dir.join("SharedSettings"), minui::settings_bytes(12, 4, 0)).unwrap();
+        app.update(0.25);
+        assert_eq!(app.system_volume, Some(12));
+        // Headphones plugged in: their own level.
+        fs::write(dir.join("SharedSettings"), minui::settings_bytes(12, 4, 1)).unwrap();
+        app.update(0.25);
+        assert_eq!(app.system_volume, Some(4));
+        // L2/R2 no longer change anything.
+        app.handle(Button::L2);
+        app.update(0.25);
+        assert_eq!(app.system_volume, Some(4));
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -619,7 +662,7 @@ mod tests {
         app.update(0.1);
         app.render(&mut c);
         fs::write(dir.join("lib/broken.mp3"), "nope").unwrap();
-        let mut app = App::new(Config { music_dir: dir.join("lib"), state_path: dir.join("s.txt") }, Box::new(NullSink::new(false)));
+        let mut app = App::new(config(&dir, "s.txt"), Box::new(NullSink::new(false)));
         app.handle(Button::A);
         wait(&mut app, |a| a.flash_text().is_some());
         app.render(&mut c);

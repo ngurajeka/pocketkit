@@ -17,13 +17,13 @@ Plays MP3, FLAC, OGG Vorbis, WAV and AAC/M4A (decoded in pure Rust by Symphonia)
 | B | X | stop |
 | L1 / R1 | Q / W | previous / next track (L1 restarts the track after 3 s) |
 | Left / Right | arrows | seek -5 s / +5 s (hold to keep seeking) |
-| L2 / R2 | E / R | volume down / up |
 | X | C | shuffle on / off |
 | Y | V | repeat: off / all / one |
 | SELECT | Tab | jump to the playing track |
-| MENU | Esc | quit (volume, shuffle, repeat and the last track are remembered) |
+| MENU | Esc | quit (shuffle, repeat and the last track are remembered) |
 
-The player's volume works on top of the system volume (the Mini's volume keys).
+Volume is the system volume: use the Mini's VOL+/- buttons (or SELECT+L/R). The slider
+follows it, read from MinUI's shared settings (`/tmp/SharedSettings` on the Mini).
 
 ## Develop on your computer
 
@@ -33,7 +33,8 @@ cargo test                              # decoder, resampler, FFT, play order, p
 cargo run --example snapshot            # snapshots/*.ppm (generated test tones, no audio)
 ```
 
-Without `MUSIC_DIR` it uses `~/Music` (or `./music`); settings go to `./state.txt`
+The folder is `MUSIC_DIR` if set, else the one chosen in Settings.pak, else `Music/` on
+the SD card (`~/Music` or `./music` on a desktop); state goes to `./state.txt`
 (`MUSIC_STATE`).
 
 ## Build for the Miyoo Mini+

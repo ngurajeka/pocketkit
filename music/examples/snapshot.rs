@@ -32,7 +32,7 @@ fn main() {
         "05 Arcade Sunset.wav",
     ];
     music_dir_with_wavs(&dir, &names, 20.0);
-    let config = Config { music_dir: dir.clone(), state_path: dir.join("state.txt") };
+    let config = Config { music_dir: dir.clone(), state_path: dir.join("state.txt"), settings_path: dir.join("SharedSettings") };
     let mut app = App::new(config, Box::new(NullSink::new(true)));
     let mut c = Canvas::new(W, H);
 
