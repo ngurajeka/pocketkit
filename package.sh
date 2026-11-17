@@ -17,6 +17,7 @@ else
 fi
 
 mkdir -p dist
+FAILED=""
 for p in $PROJECTS; do
 	p=${p%/}
 	if [ ! -x "$p/package.sh" ]; then
@@ -24,7 +25,11 @@ for p in $PROJECTS; do
 		exit 1
 	fi
 	echo "== $p"
-	(cd "$ROOT/$p" && ./package.sh)
+	# Keep going if one pak fails (e.g. music without the Miyoo toolchain).
+	if ! (cd "$ROOT/$p" && ./package.sh); then
+		FAILED="$FAILED $p"
+		continue
+	fi
 	for pak in "$ROOT/$p"/dist/*.pak; do
 		name=$(basename "$pak")
 		rm -rf "dist/$name"
@@ -36,3 +41,7 @@ echo
 echo "Paks in $ROOT/dist:"
 ls -1 dist
 echo "Copy them into Tools/miyoomini/ on the SD card."
+if [ -n "$FAILED" ]; then
+	echo "Failed:$FAILED" >&2
+	exit 1
+fi
