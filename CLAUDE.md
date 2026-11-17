@@ -9,7 +9,8 @@ MinUI paks for the Miyoo Mini / Mini+, all in Rust. A pak on the device is a fol
 - `pocket-pet/` → `Pocket Pet.pak`: virtual pet game. Standalone (own 320x240 renderer, 2x-scaled device backend).
 - `web-browser/` → `Web Browser.pak`: text-mode browser + downloader (HTTPS via rustls/ring).
 - `wifi/` → `Wifi.pak`: Wi-Fi network picker (replaced an earlier shell-script Wifi.pak, see git history).
-- `common/` (crate `minui_common`): shared by web-browser and wifi: 640x480 `Canvas` + 8x8 font (`font8x8`), `Button`, on-screen `Keyboard`, `Platform` backends, and `run()` (the 30 fps loop; MENU quits) driving anything that implements `minui_common::App`.
+- `music/` → `Music.pak`: music player styled like a classic late-90s desktop player (original art drawn in `skin.rs`). The only pak built for **glibc** (`armv7-unknown-linux-gnueabihf`), because audio goes through the vendor `MI_AO` library (`src/ao_shim.c`); needs the Miyoo Mini toolchain (see Environment).
+- `common/` (crate `minui_common`): shared by web-browser, wifi and music: 640x480 `Canvas` + 8x8 font (`font8x8`), `Button`, on-screen `Keyboard`, `Platform` backends, and `run()` (the 30 fps loop; MENU quits) driving anything that implements `minui_common::App`.
 
 Every project is its own crate with its own `Cargo.lock`/`target` (no workspace).
 
@@ -18,6 +19,8 @@ Every project is its own crate with its own `Cargo.lock`/`target` (no workspace)
 The root `flake.nix` + `.envrc` (`use flake`, via direnv) provide the toolchain: stable Rust with the `armv7-unknown-linux-musleabihf` target, and the X11/Wayland libs that `minifb` dlopens for the desktop preview (via `LD_LIBRARY_PATH`).
 
 Cross-compiling uses plain `cargo` + `rust-lld` against Rust's bundled self-contained musl; the dev shell sets `BUILD_CMD="cargo build"` and the linker, which `package.sh` picks up instead of its `cross` default. For crates with small libc-free C parts (ring, used by rustls), the shell also sets `CC/CFLAGS/AR_armv7_unknown_linux_musleabihf` to unwrapped clang + llvm-ar. There are no musl headers, so C code that includes libc headers (SDL etc.) won't build without adding a real musl cross toolchain. (`cargo-zigbuild` from nixpkgs fails for this target: it writes into zig's read-only store path.)
+
+The music pak needs the Miyoo Mini toolchain MinUI builds with (Linaro GCC 8.3 + glibc 2.28 sysroot containing `libmi_ao`/`libmi_sys`/`libmi_common` and `mi_ao.h`): <https://github.com/shauninman/miyoomini-toolchain-buildroot/releases/tag/v0.0.3> (sha256 `e158b6eb...4f2e`). The flake fetches it as `miyooToolchain` (x86_64-linux only; host tools autoPatchelf'd, the bundled gdb's missing deps ignored, broken-symlink check off because the sysroot mirrors a device filesystem) and sets `MIYOO_TOOLCHAIN`, `CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER`, `CC_/AR_armv7_unknown_linux_gnueabihf`; the Rust toolchain includes the `armv7-unknown-linux-gnueabihf` target. `music/build.rs` links `libmi_ao/mi_sys/mi_common` statically from the sysroot, so the binary only needs the device's glibc (≤ 2.28). Run glibc ARM builds under qemu with `qemu-arm -L $MIYOO_TOOLCHAIN/arm-linux-gnueabihf/libc <bin>`. The root `package.sh` keeps going when one pak fails and lists failures at the end.
 
 ARM builds can be smoke-tested with `qemu-arm` (`nix build nixpkgs#qemu-user`), e.g. web-browser's `fetch` example built for the target.
 
@@ -38,9 +41,10 @@ cargo run --example snapshot     # snapshots/*.ppm of the screens (pocket-pet, w
 Project-specific:
 - pocket-pet: `PET_SPEED=60 cargo run` (needs tick faster); saves to `pet_save.txt` (`PET_SAVE_PATH`).
 - web-browser: `cargo run --example fetch -- <url|search>` prints a page as laid out on screen; `--save <url>` downloads into `./downloads`. Env: `BROWSER_BOOKMARKS` (default `pak/bookmarks.txt`), `BROWSER_DOWNLOAD_DIR` (default `./downloads`), `BROWSER_SEARCH_URL` (default Brave Search; DuckDuckGo is unreachable from this dev machine, Mojeek/Startpage serve JS captchas).
+- music: `MUSIC_DIR=~/Music cargo run --release` (desktop audio is piped to `pw-play --raw`/`paplay`/`aplay`); tests generate WAV tones (`decoder::write_test_wav`) and play them through `audio::NullSink`. Env: `MUSIC_DIR`, `MUSIC_STATE`.
 - wifi: the desktop build uses a simulated backend (`backend::Fake`, correct password `password123`); `tests/flow.rs` drives the whole app through it.
 
-Desktop keys (common): arrows = D-pad, Z/Space = A, X = B, C = X, V = Y, Q/W = L1/R1, Enter = Start, Tab = Select, Esc = Menu.
+Desktop keys (common): arrows = D-pad, Z/Space = A, X = B, C = X, V = Y, Q/W = L1/R1, E/R = L2/R2, Enter = Start, Tab = Select, Esc = Menu. Device key codes: L2 = 15, R2 = 14 (MinUI's miyoomini layout).
 
 ## Architecture
 
