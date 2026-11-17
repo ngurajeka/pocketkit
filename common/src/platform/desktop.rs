@@ -1,5 +1,6 @@
 //! Desktop preview window so you can iterate without touching the device.
 //! Keys: arrows = D-pad, Z/Space = A, X = B, C = X, V = Y, Q = L1, W = R1,
+//! E = L2, R = R2,
 //! Enter = Start, Tab = Select, Esc = Menu (quit).
 
 use minifb::{Key, KeyRepeat, Scale, Window, WindowOptions};
@@ -39,6 +40,8 @@ fn map(key: Key) -> Option<Button> {
         Key::V => Button::Y,
         Key::Q => Button::L1,
         Key::W => Button::R1,
+        Key::E => Button::L2,
+        Key::R => Button::R2,
         Key::Enter => Button::Start,
         Key::Tab => Button::Select,
         Key::Escape => Button::Menu,

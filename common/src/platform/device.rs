@@ -45,6 +45,8 @@ fn map_key(code: u16) -> Option<Button> {
         56 => Button::Y,      // KEY_LEFTALT
         18 => Button::L1,     // KEY_E
         20 => Button::R1,     // KEY_T
+        15 => Button::L2,     // KEY_TAB
+        14 => Button::R2,     // KEY_BACKSPACE
         28 => Button::Start,  // KEY_ENTER
         97 => Button::Select, // KEY_RIGHTCTRL
         1 => Button::Menu,    // KEY_ESC
