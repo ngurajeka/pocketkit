@@ -1,4 +1,5 @@
-//! Audio outputs. Everything is 16-bit interleaved stereo at `OUT_RATE`.
+//! Audio outputs. Everything is 16-bit interleaved stereo, at the rate the
+//! output reports (`Sink::rate`, normally `OUT_RATE`).
 
 use std::{
     io::Write,
@@ -7,8 +8,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const OUT_RATE: u32 = 44100;
+/// 48 kHz: the rate the Mini's audio server runs at, so nothing resamples twice.
+pub const OUT_RATE: u32 = 48000;
 pub const CHANNELS: usize = 2;
+/// How far ahead of real time a paced output may run (its "buffer").
+const AHEAD: Duration = Duration::from_millis(120);
 
 pub trait Sink: Send {
     /// Plays `pcm`; blocks while the output is full, which paces playback.
@@ -19,36 +23,61 @@ pub trait Sink: Send {
     fn latency_frames(&self) -> u64 {
         0
     }
+    /// Output sample rate.
+    fn rate(&self) -> u32 {
+        OUT_RATE
+    }
 }
 
-/// Discards audio. In real-time mode it sleeps as long as the audio would play.
+/// Keeps writes from running more than `AHEAD` in front of the wall clock, for
+/// outputs that don't block (or might not).
+#[derive(Debug, Default)]
+pub struct Pacer {
+    clock: Option<(Instant, u64)>,
+}
+
+impl Pacer {
+    pub fn wrote(&mut self, frames: usize, rate: u32) {
+        let (start, total) = self.clock.get_or_insert((Instant::now(), 0));
+        *total += frames as u64;
+        let due = Duration::from_secs_f64(*total as f64 / rate as f64);
+        if let Some(wait) = due.checked_sub(start.elapsed() + AHEAD) {
+            thread::sleep(wait);
+        }
+        // Fell far behind (e.g. a slow SD card read)? Restart the clock instead
+        // of rushing to catch up.
+        if start.elapsed() > due + Duration::from_millis(500) {
+            self.clock = None;
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.clock = None;
+    }
+}
+
+/// Discards audio. In real-time mode it takes as long as the audio would play.
 pub struct NullSink {
     realtime: bool,
-    clock: Option<(Instant, u64)>,
+    pacer: Pacer,
 }
 
 impl NullSink {
     pub fn new(realtime: bool) -> Self {
-        Self { realtime, clock: None }
+        Self { realtime, pacer: Pacer::default() }
     }
 }
 
 impl Sink for NullSink {
     fn write(&mut self, pcm: &[i16]) -> Result<(), String> {
         if self.realtime {
-            let (start, frames) = self.clock.get_or_insert((Instant::now(), 0));
-            *frames += (pcm.len() / CHANNELS) as u64;
-            let due = Duration::from_secs_f64(*frames as f64 / OUT_RATE as f64);
-            // Stay ~100 ms ahead, like a real sound card buffer.
-            if let Some(wait) = due.checked_sub(start.elapsed() + Duration::from_millis(100)) {
-                thread::sleep(wait);
-            }
+            self.pacer.wrote(pcm.len() / CHANNELS, OUT_RATE);
         }
         Ok(())
     }
 
     fn flush(&mut self) {
-        self.clock = None;
+        self.pacer.reset();
     }
 }
 
@@ -60,9 +89,9 @@ pub struct PipeSink {
 }
 
 const PLAYERS: &[(&str, &[&str])] = &[
-    ("pw-play", &["--raw", "--rate", "44100", "--channels", "2", "--format", "s16", "-"]),
-    ("paplay", &["--raw", "--rate=44100", "--channels=2", "--format=s16le"]),
-    ("aplay", &["-q", "-t", "raw", "-f", "S16_LE", "-r", "44100", "-c", "2", "-"]),
+    ("pw-play", &["--raw", "--rate", "48000", "--channels", "2", "--format", "s16", "-"]),
+    ("paplay", &["--raw", "--rate=48000", "--channels=2", "--format=s16le"]),
+    ("aplay", &["-q", "-t", "raw", "-f", "S16_LE", "-r", "48000", "-c", "2", "-"]),
 ];
 
 impl PipeSink {
@@ -135,21 +164,101 @@ impl Drop for PipeSink {
     }
 }
 
-/// The Miyoo Mini's audio output, through the vendor MI_AO library (`ao_shim.c`).
+/// The Miyoo Mini's outputs (`ao_shim.c`).
 #[cfg(feature = "device")]
-pub mod miao {
-    use super::{Sink, CHANNELS, OUT_RATE};
+pub mod device {
+    use super::{NullSink, Pacer, Sink, AHEAD, CHANNELS, OUT_RATE};
 
     extern "C" {
+        fn dsp_open(rate: u32, channels: u32) -> i32;
+        fn dsp_write(data: *const i16, bytes: u32) -> i32;
+        fn dsp_reset();
+        fn dsp_close();
         fn ao_open(rate: u32, channels: u32, frame_samples: u32) -> i32;
         fn ao_write(data: *const i16, bytes: u32) -> i32;
         fn ao_clear();
         fn ao_close();
     }
 
+    /// The best output available: `/dev/dsp` (MinUI's audio server, through the
+    /// libpadsp.so it preloads into every app), else MI_AO directly, else silence.
+    pub fn open() -> Box<dyn Sink> {
+        let preload = std::env::var("LD_PRELOAD").unwrap_or_default();
+        eprintln!("audio: LD_PRELOAD={preload:?}");
+        match DspSink::open() {
+            Ok(s) => {
+                eprintln!("audio: /dev/dsp at {} Hz", s.rate);
+                return Box::new(s);
+            }
+            Err(e) => eprintln!("audio: {e}"),
+        }
+        match MiAoSink::open() {
+            Ok(s) => {
+                eprintln!("audio: MI_AO at {OUT_RATE} Hz");
+                Box::new(s)
+            }
+            Err(e) => {
+                eprintln!("audio: {e}; playing silently");
+                Box::new(NullSink::new(true))
+            }
+        }
+    }
+
+    /// OSS `/dev/dsp`. With MinUI's libpadsp.so preloaded, the calls in
+    /// `ao_shim.c` go to the firmware's audioserver, which owns the hardware and
+    /// applies the system volume.
+    pub struct DspSink {
+        rate: u32,
+        pacer: Pacer,
+        bytes: Vec<u8>,
+    }
+
+    impl DspSink {
+        pub fn open() -> Result<Self, String> {
+            let r = unsafe { dsp_open(OUT_RATE, CHANNELS as u32) };
+            if r <= 0 {
+                return Err(format!("can't open /dev/dsp (step {})", -r));
+            }
+            Ok(Self { rate: r as u32, pacer: Pacer::default(), bytes: Vec::new() })
+        }
+    }
+
+    impl Sink for DspSink {
+        fn write(&mut self, pcm: &[i16]) -> Result<(), String> {
+            self.bytes.clear();
+            self.bytes.extend(pcm.iter().flat_map(|s| s.to_le_bytes()));
+            if unsafe { dsp_write(self.bytes.as_ptr().cast(), self.bytes.len() as u32) } != 0 {
+                return Err("Audio output failed (/dev/dsp write)".into());
+            }
+            self.pacer.wrote(pcm.len() / CHANNELS, self.rate);
+            Ok(())
+        }
+
+        fn flush(&mut self) {
+            unsafe { dsp_reset() };
+            self.pacer.reset();
+        }
+
+        fn latency_frames(&self) -> u64 {
+            (AHEAD.as_secs_f64() * self.rate as f64) as u64
+        }
+
+        fn rate(&self) -> u32 {
+            self.rate
+        }
+    }
+
+    impl Drop for DspSink {
+        fn drop(&mut self) {
+            unsafe { dsp_close() };
+        }
+    }
+
     /// Frames per hardware buffer; writes are sent in pieces of exactly this size.
     const FRAME: usize = 1024;
 
+    /// The vendor MI_AO API directly. Only used when there's no `/dev/dsp`
+    /// (no audio server), since it would fight the server for the hardware.
     pub struct MiAoSink {
         pending: Vec<i16>,
     }
@@ -158,7 +267,7 @@ pub mod miao {
         pub fn open() -> Result<Self, String> {
             let r = unsafe { ao_open(OUT_RATE, CHANNELS as u32, FRAME as u32) };
             if r != 0 {
-                return Err(format!("Can't open audio output (MI_AO error {r})"));
+                return Err(format!("can't open MI_AO (step {})", -r));
             }
             Ok(Self { pending: Vec::with_capacity(FRAME * CHANNELS * 2) })
         }
@@ -196,5 +305,22 @@ pub mod miao {
         fn drop(&mut self) {
             unsafe { ao_close() };
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pacer_keeps_real_time() {
+        let mut p = Pacer::default();
+        let start = Instant::now();
+        // 0.4 s of audio in 20 ms pieces: should take ~0.4 s - AHEAD.
+        for _ in 0..20 {
+            p.wrote(960, 48000);
+        }
+        let took = start.elapsed();
+        assert!(took >= Duration::from_millis(250) && took < Duration::from_millis(400), "{took:?}");
     }
 }

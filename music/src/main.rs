@@ -5,13 +5,7 @@ use music::{
 
 #[cfg(feature = "device")]
 fn sink() -> Box<dyn Sink> {
-    match music::audio::miao::MiAoSink::open() {
-        Ok(s) => Box::new(s),
-        Err(e) => {
-            eprintln!("{e}; playing silently");
-            Box::new(music::audio::NullSink::new(true))
-        }
-    }
+    music::audio::device::open()
 }
 
 #[cfg(not(feature = "device"))]

@@ -13,7 +13,7 @@ use minui_common::{
 };
 
 use crate::{
-    audio::{Sink, OUT_RATE},
+    audio::Sink,
     decoder::TrackInfo,
     dsp,
     library::{self, fmt_time, Repeat, Rng, Track},
@@ -319,7 +319,7 @@ impl App {
 
         // Analyzer: bars jump up, fall smoothly; peak caps hold, then drop.
         let levels = match self.state() {
-            State::Playing => dsp::spectrum(&self.player.shared.samples(), OUT_RATE, BANDS),
+            State::Playing => dsp::spectrum(&self.player.shared.samples(), self.player.shared.rate(), BANDS),
             _ => vec![0.0; BANDS],
         };
         for i in 0..BANDS {

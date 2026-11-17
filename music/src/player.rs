@@ -12,7 +12,7 @@ use std::{
 };
 
 use crate::{
-    audio::{Sink, CHANNELS, OUT_RATE},
+    audio::{Sink, CHANNELS},
     decoder::{Decoder, TrackInfo},
     dsp::{self, Resampler, FFT_SIZE},
 };
@@ -50,6 +50,8 @@ pub struct Shared {
     pos_ms: AtomicU64,
     /// 0-100.
     volume: AtomicU32,
+    /// Output sample rate (for the analyzer).
+    rate: AtomicU32,
     /// The most recent mono samples sent to the output.
     vis: Mutex<Vec<f32>>,
 }
@@ -69,6 +71,10 @@ impl Shared {
 
     pub fn volume(&self) -> u32 {
         self.volume.load(Ordering::Relaxed)
+    }
+
+    pub fn rate(&self) -> u32 {
+        self.rate.load(Ordering::Relaxed)
     }
 
     pub fn set_volume(&self, v: u32) {
@@ -94,6 +100,7 @@ impl Player {
             state: AtomicU8::new(State::Stopped as u8),
             pos_ms: AtomicU64::new(0),
             volume: AtomicU32::new(volume.min(100)),
+            rate: AtomicU32::new(sink.rate()),
             vis: Mutex::new(Vec::new()),
         });
         let s = shared.clone();
@@ -127,7 +134,7 @@ impl Engine {
             shared,
             events,
             decoder: None,
-            resampler: Resampler::new(OUT_RATE, OUT_RATE),
+            resampler: Resampler::new(1, 1),
             playing: false,
             pos: 0.0,
             stereo: Vec::new(),
@@ -143,7 +150,7 @@ impl Engine {
             (Some(_), false) => State::Paused,
         };
         self.shared.state.store(state as u8, Ordering::Relaxed);
-        let heard = self.pos - self.sink.latency_frames() as f64 / OUT_RATE as f64;
+        let heard = self.pos - self.sink.latency_frames() as f64 / self.sink.rate() as f64;
         self.shared.pos_ms.store((heard.max(0.0) * 1000.0) as u64, Ordering::Relaxed);
         if state == State::Stopped {
             if let Ok(mut v) = self.shared.vis.lock() {
@@ -165,7 +172,7 @@ impl Engine {
                 self.stop();
                 match Decoder::open(&path) {
                     Ok(mut d) => {
-                        self.resampler = Resampler::new(d.info.rate, OUT_RATE);
+                        self.resampler = Resampler::new(d.info.rate, self.sink.rate());
                         if start > 0.0 {
                             self.pos = d.seek(start).unwrap_or(0.0);
                         }

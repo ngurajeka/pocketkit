@@ -1,10 +1,70 @@
-/* Minimal wrapper around the SigmaStar MI_AO audio output API used by the
- * Miyoo Mini firmware: open device 0 / channel 0 as 16-bit PCM and push
- * interleaved frames. Settings follow the Miyoo Mini SDL audio driver. */
+/* Audio output for the Miyoo Mini, in C so the calls are plain libc ones.
+ *
+ * 1. OSS /dev/dsp. Under MinUI this is the one to use: MinUI starts the
+ *    firmware's audioserver (which owns the hardware) and preloads
+ *    libpadsp.so into every app; that library intercepts open/ioctl/write on
+ *    /dev/dsp and forwards the audio to the server.
+ * 2. The SigmaStar MI_AO API directly (device 0 / channel 0, 16-bit PCM), for
+ *    when no audio server is running. */
+#include <errno.h>
+#include <fcntl.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
+#include <sys/soundcard.h>
 #include <mi_sys.h>
 #include <mi_ao.h>
+
+static int dsp_fd = -1;
+
+/* Returns the rate actually set (> 0), or -step on failure.
+ *
+ * Workarounds for the firmware's libpadsp.so (checked on a Mini+):
+ * - its open() hook only looks up the real open() lazily on the non-audio
+ *   path, but the /dev/dsp path calls it unchecked, so if /dev/dsp is the first
+ *   file opened through open() it jumps to NULL. Rust's own file I/O uses
+ *   open64(), which isn't hooked, so open something harmless first.
+ * - SNDCTL_DSP_RESET crashes it too (see dsp_reset). */
+int dsp_open(unsigned rate, unsigned channels)
+{
+    int fd, fmt = AFMT_S16_LE, ch = (int)channels, speed = (int)rate;
+    int warm = open("/dev/null", O_RDONLY);
+    if (warm >= 0) close(warm);
+    if ((fd = open("/dev/dsp", O_WRONLY)) < 0) return -1;
+    if (ioctl(fd, SNDCTL_DSP_SETFMT, &fmt) < 0 || fmt != AFMT_S16_LE) { close(fd); return -2; }
+    if (ioctl(fd, SNDCTL_DSP_CHANNELS, &ch) < 0 || ch != (int)channels) { close(fd); return -3; }
+    if (ioctl(fd, SNDCTL_DSP_SPEED, &speed) < 0 || speed <= 0) { close(fd); return -4; }
+    dsp_fd = fd;
+    return speed;
+}
+
+int dsp_write(const void *data, unsigned bytes)
+{
+    const char *p = data;
+    while (bytes > 0) {
+        ssize_t n = write(dsp_fd, p, bytes);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        p += n;
+        bytes -= (unsigned)n;
+    }
+    return 0;
+}
+
+/* Deliberately does nothing: SNDCTL_DSP_RESET segfaults inside libpadsp.so.
+ * Only a few tens of ms are buffered (4 KB pipe + the server), so after a
+ * seek that little bit of old audio just plays out. */
+void dsp_reset(void)
+{
+}
+
+void dsp_close(void)
+{
+    if (dsp_fd >= 0) close(dsp_fd);
+    dsp_fd = -1;
+}
 
 static MI_AUDIO_Attr_t attr;
 static int opened;
