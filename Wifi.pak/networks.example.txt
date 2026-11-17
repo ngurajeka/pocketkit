@@ -1,9 +1,0 @@
-# Wi-Fi networks for Wifi.pak.
-# Copy this file to networks.txt in the same folder, edit it, then run Wifi from Tools.
-# Wifi.pak imports it and deletes networks.txt afterwards.
-#
-# One network per line:   NAME | PASSWORD
-# Leave the password empty for an open network. Passwords must be 8-63 characters.
-# The network name can't contain "|".
-
-MyHomeWifi | my-secret-password
