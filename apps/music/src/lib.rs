@@ -16,3 +16,4 @@ pub mod library;
 pub mod app;
 pub mod player;
 pub mod skin;
+pub mod theme;

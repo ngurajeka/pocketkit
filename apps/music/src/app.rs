@@ -21,6 +21,7 @@ use crate::{
     library::{self, fmt_time, Repeat, Rng, Track},
     player::{Cmd, Event, Player, State},
     skin::{self, Icon},
+    theme::{self, Theme, THEMES},
 };
 
 const BANDS: usize = 20;
@@ -102,6 +103,8 @@ pub struct App {
     marquee_px: f32,
     /// Consecutive files that failed to play (to stop skipping eventually).
     failures: usize,
+    /// Index into `theme::THEMES`.
+    pub theme: usize,
 }
 
 impl App {
@@ -139,9 +142,14 @@ impl App {
             pressed: None,
             marquee_px: 0.0,
             failures: 0,
+            theme: get("theme").map_or(0, theme::by_name),
         };
         app.scroll_to_sel();
         app
+    }
+
+    pub fn theme(&self) -> &'static Theme {
+        &THEMES[self.theme % THEMES.len()]
     }
 
     pub fn state(&self) -> State {
@@ -174,8 +182,9 @@ impl App {
             Repeat::One => "one",
         };
         let text = format!(
-            "shuffle={}\nrepeat={repeat}\ntrack={track}\n",
-            self.shuffle as u8
+            "shuffle={}\nrepeat={repeat}\ntheme={}\ntrack={track}\n",
+            self.shuffle as u8,
+            self.theme().name
         );
         if let Some(dir) = self.state_path.parent() {
             let _ = fs::create_dir_all(dir);
@@ -283,6 +292,11 @@ impl App {
                     Repeat::One => "Repeat this track",
                 });
             }
+            Button::L2 | Button::R2 => {
+                let n = THEMES.len();
+                self.theme = if button == Button::R2 { (self.theme + 1) % n } else { (self.theme + n - 1) % n };
+                self.flash(format!("Theme: {}", self.theme().name));
+            }
             Button::Select => {
                 if let Some(c) = self.current {
                     self.sel = c;
@@ -365,7 +379,8 @@ impl App {
     // ------------------------------------------------------------- drawing
 
     pub fn render(&self, c: &mut Canvas) {
-        c.fill(skin::FACE);
+        let th = self.theme();
+        c.fill(th.face);
         self.draw_main(c);
         self.draw_playlist(c);
     }
@@ -375,13 +390,14 @@ impl App {
     }
 
     fn draw_main(&self, c: &mut Canvas) {
+        let th = self.theme();
         let w = W as i32;
-        skin::title_bar(c, MAIN_TOP, w, "MUSIC");
-        skin::bevel(c, 0, MAIN_TOP + 16, w, PL_TOP - 16, false);
+        skin::title_bar(c, th, MAIN_TOP, w, "MUSIC");
+        skin::bevel(c, th, 0, MAIN_TOP + 16, w, PL_TOP - 16, false);
 
         // LCD: state icon, LED time, format info, analyzer.
         let (lx, ly, lw, lh) = (10, 24, 224, 86);
-        skin::inset(c, lx, ly, lw, lh, skin::LCD_BG);
+        skin::inset(c, th, lx, ly, lw, lh, th.lcd_bg);
         let state = self.state();
         let state_icon = match state {
             State::Playing => Icon::Play,
@@ -389,9 +405,9 @@ impl App {
             State::Stopped => Icon::Stop,
         };
         let icon_on = state != State::Paused || (self.time * 2.0) as i32 % 2 == 0;
-        skin::icon(c, state_icon, lx + 4, ly + 6, 22, 22, if icon_on { skin::LCD_ON } else { skin::LCD_OFF });
+        skin::icon(c, state_icon, lx + 4, ly + 6, 22, 22, if icon_on { th.lcd_on } else { th.lcd_off });
         let shown = (state != State::Stopped).then(|| self.position());
-        skin::time_display(c, lx + 32, ly + 6, shown, state != State::Paused || (self.time * 2.0) as i32 % 2 == 0);
+        skin::time_display(c, th, lx + 32, ly + 6, shown, state != State::Paused || (self.time * 2.0) as i32 % 2 == 0);
 
         let (kbps, khz, stereo) = match &self.info {
             Some(i) => (
@@ -402,17 +418,17 @@ impl App {
             None => ("---".into(), "--".into(), None),
         };
         let ix = lx + 146;
-        c.text(ix, ly + 8, &format!("{kbps:>4}"), 1, skin::LCD_ON);
-        c.text(ix + 36, ly + 8, "kbps", 1, skin::LCD_DIM);
-        c.text(ix, ly + 22, &format!("{khz:>4}"), 1, skin::LCD_ON);
-        c.text(ix + 36, ly + 22, "kHz", 1, skin::LCD_DIM);
-        c.text(ix, ly + 36, "mono", 1, if stereo == Some(false) { skin::LCD_ON } else { skin::LCD_OFF });
-        c.text(ix + 36, ly + 36, "st", 1, if stereo == Some(true) { skin::LCD_ON } else { skin::LCD_OFF });
+        c.text(ix, ly + 8, &format!("{kbps:>4}"), 1, th.lcd_on);
+        c.text(ix + 36, ly + 8, "kbps", 1, th.lcd_dim);
+        c.text(ix, ly + 22, &format!("{khz:>4}"), 1, th.lcd_on);
+        c.text(ix + 36, ly + 22, "kHz", 1, th.lcd_dim);
+        c.text(ix, ly + 36, "mono", 1, if stereo == Some(false) { th.lcd_on } else { th.lcd_off });
+        c.text(ix + 36, ly + 36, "st", 1, if stereo == Some(true) { th.lcd_on } else { th.lcd_off });
         self.draw_analyzer(c, lx + 8, ly + 48, 32);
 
         // Scrolling title.
         let (mx, my, mw, mh) = MARQUEE;
-        skin::inset(c, mx, my, mw, mh, skin::LCD_BG);
+        skin::inset(c, th, mx, my, mw, mh, th.lcd_bg);
         let title = match self.current.and_then(|i| self.tracks.get(i).map(|t| (i, t))) {
             Some((i, t)) => match t.duration.or(self.duration()) {
                 Some(d) => format!("{}. {} ({})", i + 1, t.name, fmt_time(d)),
@@ -424,21 +440,21 @@ impl App {
         let text = if let Some(msg) = self.flash_text() { msg.to_string() } else { title };
         let text_w = text.chars().count() as i32 * 16;
         if text_w <= mw - 8 || self.flash.is_some() {
-            skin::text_clipped(c, mx + 4, my + 4, &text, (2, skin::LCD_ON), (mx + 2, mx + mw - 2));
+            skin::text_clipped(c, mx + 4, my + 4, &text, (2, th.lcd_on), (mx + 2, mx + mw - 2));
         } else {
             let gap = "  ***  ";
             let full = format!("{text}{gap}");
             let period = full.chars().count() as i32 * 16;
             let off = self.marquee_px as i32 % period;
             for k in 0..2 {
-                skin::text_clipped(c, mx + 4 - off + k * period, my + 4, &full, (2, skin::LCD_ON), (mx + 2, mx + mw - 2));
+                skin::text_clipped(c, mx + 4 - off + k * period, my + 4, &full, (2, th.lcd_on), (mx + 2, mx + mw - 2));
             }
         }
 
         // Volume, shuffle, repeat.
-        c.text(244, 62, "VOL", 1, skin::FACE_TEXT);
+        c.text(244, 62, "VOL", 1, th.text);
         let vol_frac = self.system_volume.map(|(v, max)| v as f32 / max.max(1) as f32);
-        skin::slider(c, 274, 56, 164, 18, vol_frac, true);
+        skin::slider(c, th, (274, 56, 164, 18), vol_frac, true);
         self.toggle(c, 450, 54, 84, "SHUFFLE", self.shuffle);
         let rep = match self.repeat {
             Repeat::One => "REPEAT 1",
@@ -451,13 +467,13 @@ impl App {
             Some(i) => format!("Track {} of {}", i + 1, self.tracks.len()),
             None => format!("{} tracks", self.tracks.len()),
         };
-        c.text(244, 90, &count, 1, skin::FACE_TEXT_DIM);
+        c.text(244, 90, &count, 1, th.text_dim);
         let vol = match self.system_volume {
             Some((v, 100)) => format!("Volume {v}%"),
             Some((v, max)) => format!("Volume {v}/{max}"),
             None => "Volume --".to_string(),
         };
-        c.text(630 - 8 * vol.len() as i32, 90, &vol, 1, skin::FACE_TEXT_DIM);
+        c.text(630 - 8 * vol.len() as i32, 90, &vol, 1, th.text_dim);
 
         // Seek bar.
         let frac = match (self.duration(), state) {
@@ -465,54 +481,57 @@ impl App {
             (_, State::Stopped) => None,
             _ => Some(0.0),
         };
-        skin::slider(c, 10, 116, 620, 18, frac, false);
+        skin::slider(c, th, (10, 116, 620, 18), frac, false);
 
         // Transport buttons.
         let ctls = [(Ctl::Prev, Icon::Prev), (Ctl::Play, Icon::Play), (Ctl::Pause, Icon::Pause), (Ctl::Stop, Icon::Stop), (Ctl::Next, Icon::Next)];
         for (i, (ctl, ic)) in ctls.into_iter().enumerate() {
             let x = 10 + i as i32 * 58;
             let down = self.pressed.is_some_and(|(p, _)| p == ctl);
-            skin::bevel(c, x, 144, 52, 36, down);
+            skin::bevel(c, th, x, 144, 52, 36, down);
             let off = if down { 1 } else { 0 };
-            skin::icon(c, ic, x + off, 144 + off, 52, 36, skin::FACE_TEXT);
+            skin::icon(c, ic, x + off, 144 + off, 52, 36, th.text);
         }
         let hints = [
             "A play   START pause   B stop",
             "L1/R1 track  </> seek  VOL+/- vol",
         ];
         for (i, h) in hints.iter().enumerate() {
-            c.text(310, 150 + i as i32 * 14, &fit(h, 40), 1, skin::FACE_TEXT_DIM);
+            c.text(310, 150 + i as i32 * 14, &fit(h, 40), 1, th.text_dim);
         }
     }
 
     fn toggle(&self, c: &mut Canvas, x: i32, y: i32, w: i32, label: &str, on: bool) {
-        skin::bevel(c, x, y, w, 20, on);
-        c.rect(x + 6, y + 7, 6, 6, if on { skin::LCD_ON } else { skin::LCD_OFF });
-        c.text(x + 16, y + 6, label, 1, skin::FACE_TEXT);
+        let th = self.theme();
+        skin::bevel(c, th, x, y, w, 20, on);
+        c.rect(x + 6, y + 7, 6, 6, if on { th.lcd_on } else { th.lcd_off });
+        c.text(x + 16, y + 6, label, 1, th.text);
     }
 
     fn draw_analyzer(&self, c: &mut Canvas, x: i32, y: i32, h: i32) {
+        let th = self.theme();
         let (bw, gap) = (8, 2);
         for i in 0..BANDS {
             let bx = x + i as i32 * (bw + gap);
             let bar_h = (self.bars[i] * h as f32) as i32;
             for row in 0..bar_h {
                 let t = (row * 255 / h) as u32;
-                c.rect(bx, y + h - 1 - row, bw, 1, skin::bar_color(t));
+                c.rect(bx, y + h - 1 - row, bw, 1, skin::bar_color(th, t));
             }
             let peak_y = y + h - 1 - (self.peaks[i] * (h - 1) as f32) as i32;
             if self.peaks[i] > 0.02 {
-                c.rect(bx, peak_y, bw, 1, skin::PEAK);
+                c.rect(bx, peak_y, bw, 1, th.peak);
             }
         }
     }
 
     fn draw_playlist(&self, c: &mut Canvas) {
+        let th = self.theme();
         let w = W as i32;
-        skin::title_bar(c, PL_TOP, w, "PLAYLIST");
-        skin::bevel(c, 0, PL_TOP + 16, w, 480 - PL_TOP - 16, false);
+        skin::title_bar(c, th, PL_TOP, w, "PLAYLIST");
+        skin::bevel(c, th, 0, PL_TOP + 16, w, 480 - PL_TOP - 16, false);
         let list_h = PL_ROWS as i32 * ROW_H + 4;
-        skin::inset(c, LIST_X, LIST_Y, LIST_W, list_h, skin::LCD_BG);
+        skin::inset(c, th, LIST_X, LIST_Y, LIST_W, list_h, th.lcd_bg);
         let cols = (LIST_W as usize - 8) / 16;
 
         if self.tracks.is_empty() {
@@ -524,15 +543,15 @@ impl App {
                 "files (folders are fine) there.".to_string(),
             ];
             for (i, l) in lines.iter().enumerate() {
-                c.text(LIST_X + 4, LIST_Y + 4 + i as i32 * ROW_H, &fit(l, cols), 2, skin::LCD_ON);
+                c.text(LIST_X + 4, LIST_Y + 4 + i as i32 * ROW_H, &fit(l, cols), 2, th.lcd_on);
             }
         }
         for (row, (i, t)) in self.tracks.iter().enumerate().skip(self.list_top).take(PL_ROWS).enumerate() {
             let y = LIST_Y + 2 + row as i32 * ROW_H;
             if i == self.sel {
-                c.rect(LIST_X, y, LIST_W, ROW_H, skin::SEL);
+                c.rect(LIST_X, y, LIST_W, ROW_H, th.sel);
             }
-            let color = if Some(i) == self.current { skin::WHITE } else { skin::LCD_ON };
+            let color = if Some(i) == self.current { th.current } else { th.lcd_on };
             let dur = t.duration.map(fmt_time).unwrap_or_default();
             let dur_cols = dur.chars().count();
             let name = format!("{}. {}", i + 1, t.name);
@@ -547,9 +566,9 @@ impl App {
         let known: f64 = self.tracks.iter().filter_map(|t| t.duration).sum();
         let total = if known > 0.0 { format!("{} tracks, {}+", self.tracks.len(), fmt_time(known)) } else { format!("{} tracks", self.tracks.len()) };
         let fy = LIST_Y + list_h + 8;
-        c.text(LIST_X, fy, &total, 1, skin::FACE_TEXT_DIM);
-        let hint = "X shuffle  Y repeat  SELECT now playing";
-        c.text(w - 8 - 8 * hint.len() as i32, fy, hint, 1, skin::FACE_TEXT_DIM);
+        c.text(LIST_X, fy, &total, 1, th.text_dim);
+        let hint = "X shuffle  Y repeat  L2/R2 theme  SELECT playing";
+        c.text(w - 8 - 8 * hint.len() as i32, fy, hint, 1, th.text_dim);
     }
 }
 

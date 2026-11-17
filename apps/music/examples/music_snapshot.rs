@@ -50,6 +50,13 @@ fn main() {
     app.handle(Button::Down);
     app.render(&mut c);
     save_ppm("playing", &c);
+    // One shot per colour theme.
+    for (i, theme) in music::theme::THEMES.iter().enumerate() {
+        app.theme = i;
+        app.render(&mut c);
+        save_ppm(&format!("theme-{}", theme.name.to_lowercase()), &c);
+    }
+    app.theme = 0;
     app.shutdown();
     let _ = fs::remove_dir_all(&dir);
     println!("wrote snapshots/{{stopped,playing}}.ppm");
