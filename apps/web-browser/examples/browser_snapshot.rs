@@ -30,7 +30,7 @@ fn save_ppm(name: &str, c: &Canvas) {
 
 fn main() {
     fs::create_dir_all("snapshots").unwrap();
-    let bookmarks = parse_bookmarks(&fs::read_to_string("pak/bookmarks.txt").unwrap_or_default());
+    let bookmarks = parse_bookmarks(&fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/pak/minui/bookmarks.txt")).unwrap_or_default());
     let mut app = App::new(Config { bookmarks, download_dir: PathBuf::from("/mnt/SDCARD/Downloads") });
     let mut c = Canvas::new(W, H);
 

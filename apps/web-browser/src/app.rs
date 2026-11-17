@@ -52,7 +52,8 @@ pub struct Config {
 impl Config {
     /// `BROWSER_BOOKMARKS` (file) and `BROWSER_DOWNLOAD_DIR`, both set by launch.sh.
     pub fn from_env() -> Self {
-        let path = env::var("BROWSER_BOOKMARKS").unwrap_or_else(|_| "pak/bookmarks.txt".into());
+        let path = env::var("BROWSER_BOOKMARKS")
+            .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/pak/minui/bookmarks.txt").into());
         let bookmarks = parse_bookmarks(&fs::read_to_string(path).unwrap_or_default());
         let download_dir = env::var_os("BROWSER_DOWNLOAD_DIR").map_or_else(|| PathBuf::from("downloads"), PathBuf::from);
         Self { bookmarks, download_dir }
