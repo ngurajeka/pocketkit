@@ -40,7 +40,7 @@ impl Miyoo {
     pub fn open() -> io::Result<Self> {
         // `FB_ROTATE=0` turns the 180-degree flip off.
         let rotate = std::env::var("FB_ROTATE").map_or(true, |v| v.trim() != "0");
-        let fb = Framebuffer::open(rotate)?;
+        let fb = Framebuffer::open(rotate, false)?;
         let mut input = Input::new();
         input.add("/dev/input/event0", map_key)?;
         Ok(Self { fb, input })

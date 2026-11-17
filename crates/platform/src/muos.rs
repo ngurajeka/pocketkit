@@ -45,7 +45,8 @@ pub struct Muos {
 
 impl Muos {
     pub fn open() -> io::Result<Self> {
-        let fb = Framebuffer::open(false)?;
+        // Double-buffered (640x960): flip pages so moving highlights never tear.
+        let fb = Framebuffer::open(false, true)?;
         let mut input = Input::new();
         let pad = find_by_name("muOS-Keys").unwrap_or_else(|| "/dev/input/event1".into());
         input.add(&pad, map_gamepad)?;

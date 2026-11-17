@@ -7,6 +7,8 @@ description = "pocketkit platforms: desktop preview, MinUI (Miyoo Mini+), muOS (
 
 [dependencies]
 pocketkit_core = { path = "../core" }
+# Framebuffer ioctls (vsync-timed page flips). Plain bindings, fine for static musl.
+libc = "0.2"
 minifb = { version = "0.27", optional = true }
 
 [features]
