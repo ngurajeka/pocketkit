@@ -1,7 +1,9 @@
 # Wifi
 
-Pick a Wi-Fi network on screen and connect to it, on the Miyoo Mini+ (MinUI). Written in
-Rust; replaces the old shell-script Wifi.pak that only read `networks.txt`.
+Pick a Wi-Fi network on screen and connect to it, on the Miyoo Mini+ (**MinUI** only;
+muOS has its own network settings).
+
+![Wifi](../../docs/screenshots/wifi.png)
 
 Opening it turns Wi-Fi on and scans. Networks are listed strongest first with signal bars;
 saved ones are marked `saved`, the current one `connected`. Wi-Fi stays on when you quit,
@@ -29,20 +31,26 @@ not supported.
 
 1. Driver: install ADBD.pak from the MinUI Extras (it contains `8188fu.ko`), or copy
    `8188fu.ko` into `Wifi.pak/`.
-2. Copy `dist/Wifi.pak` (see below) to `Tools/miyoomini/Wifi.pak` on the SD card.
+2. Copy `Wifi.pak` (from a release, or `dist/minui/` after building) into
+   `Tools/miyoomini/` on the SD card.
 
 Networks are saved in `/appconfigs/wpa_supplicant.conf`, the stock firmware's file. The
 first run adds `ctrl_interface` / `update_config` to it if missing, keeping a copy of the
 original in `Wifi.pak/backup/`.
 
-## Develop on your computer
+## Develop
+
+From the repo root, in the Nix dev shell:
 
 ```sh
-cargo run --release           # preview window with simulated networks; "password123" works
-cargo test                    # parsers, control socket, screens, full flow on the simulator
-cargo run --example snapshot  # snapshots/*.ppm of both screens
-./package.sh                  # device build -> dist/Wifi.pak (inside the Nix dev shell)
+cargo run --release -p wifi                 # preview with simulated networks; "password123" works
+cargo test -p wifi                          # parsers, control socket, screens, full flow on the simulator
+cargo run -p wifi --example wifi_snapshot   # snapshots/*.ppm of both screens
+./package.sh minui wifi                     # -> dist/minui/Wifi.pak
 ```
+
+`wifi --up` turns Wi-Fi on with the saved networks and exits without a screen; the
+Settings app uses it for "Wi-Fi at startup".
 
 ## How it works
 

@@ -1,11 +1,12 @@
 # Pocket Pet
 
-A tiny virtual pet for the Miyoo Mini+ (MinUI), written in Rust.
+A tiny virtual pet for the Miyoo Mini+ (**MinUI**), written in Rust.
 Feed, play with, wash and put your pet to bed. Its needs keep ticking while the
 console is off (up to 8 hours' worth).
 
-No microphone on the Mini+, so there's no voice mimic. Everything is drawn in
-code (`src/render.rs`), so there are no art assets yet.
+Everything is drawn in code (`src/render.rs`); there are no art assets.
+
+![Pocket Pet](../../docs/screenshots/pocket-pet.png)
 
 ## Controls
 
@@ -15,35 +16,26 @@ code (`src/render.rs`), so there are no art assets yet.
 | A | Z or Space | Do it (a head-shake means "not now") |
 | MENU | Esc | Save and quit |
 
-## Develop on your computer
+## Develop
+
+From the repo root, in the Nix dev shell:
 
 ```sh
-cargo run --release          # opens a 640x480 preview window
-cargo test                   # game logic, save format, renderer smoke tests
-cargo run --example snapshot # writes snapshots/*.ppm, one per mood
-PET_SPEED=60 cargo run       # needs run 60x faster, handy for testing moods
+cargo run --release -p pocket_pet               # preview window
+cargo test -p pocket_pet                        # game logic, save format, renderer smoke tests
+cargo run -p pocket_pet --example pet_snapshot  # snapshots/*.ppm, one per mood
+PET_SPEED=60 cargo run -p pocket_pet            # needs run 60x faster, handy for testing moods
+./package.sh minui pocket-pet                   # -> dist/minui/Pocket Pet.pak
 ```
 
-Saves go to `pet_save.txt` (override with `PET_SAVE_PATH`).
-
-## Build for the Miyoo Mini+
-
-```sh
-rustup target add armv7-unknown-linux-musleabihf
-cargo install cross            # needs Docker; or use cargo-zigbuild, see package.sh
-./package.sh                   # -> dist/Pocket Pet.pak
-```
-
-Copy `dist/Pocket Pet.pak` into `Tools/miyoomini/` on the SD card (use a spare
-card, not your main one). After a run, check `.userdata/.../pocket-pet/log.txt`
-for errors.
+Saves go to `pet_save.txt` (override with `PET_SAVE_PATH`). Copy `Pocket Pet.pak` into
+`Tools/miyoomini/` on the SD card; errors go to `.userdata/miyoomini/pocket-pet/log.txt`.
 
 ## Status
 
-Game logic, save/load and the renderer are unit tested; the pak runs on a Miyoo Mini+.
-The device backend (`src/platform/device.rs`) rotates every frame 180 degrees because
-the panel is mounted upside down. If the screen ever stays black or garbled, read
-`log.txt` and check `/sys/class/graphics/fb0/{virtual_size,bits_per_pixel,stride}`.
+Runs on a Miyoo Mini+. It still has its own 320x240 renderer and Miyoo backend
+(`src/platform/`, built with `--features device`) rather than the shared pocketkit
+crates, so it isn't on muOS yet.
 
 ## Layout
 

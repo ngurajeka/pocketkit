@@ -1,15 +1,23 @@
 # Music
 
-A music player for the Miyoo Mini+ (MinUI) in the style of the classic late-90s desktop
-players: LED time display, scrolling title, spectrum analyzer, volume slider, transport
-buttons and a playlist window. All artwork is original and drawn in code.
+A music player in the style of the classic late-90s desktop players: LED time display,
+scrolling title, spectrum analyzer, volume slider, transport buttons and a playlist
+window. All artwork is original and drawn in code (`src/skin.rs`).
 
-Plays MP3, FLAC, OGG Vorbis, WAV and AAC/M4A (decoded in pure Rust by Symphonia) from
-`Music/` at the root of the SD card, subfolders included, in path order.
+Plays MP3, FLAC, OGG Vorbis, WAV and AAC/M4A (decoded in pure Rust by Symphonia),
+subfolders included, in path order. Runs on **MinUI** (Miyoo Mini+) and **muOS**
+(RG35XX-SP).
+
+![Music](../../docs/screenshots/music.png)
+
+| Platform | Music folder | Install |
+|---|---|---|
+| MinUI | `Music/` at the root of the SD card (or the folder chosen in Settings) | copy `Music.pak` into `Tools/miyoomini/` |
+| muOS | muOS's music folder (`MUOS/music` on the SD card) | put `Music.muxapp` in `ARCHIVE/` and install it from Applications → Archive Manager |
 
 ## Controls
 
-| Mini+ | Desktop preview | Action |
+| Button | Desktop preview | Action |
 |---|---|---|
 | Up / Down | arrows | move in the playlist |
 | A | Z or Space | play the selected track |
@@ -22,43 +30,37 @@ Plays MP3, FLAC, OGG Vorbis, WAV and AAC/M4A (decoded in pure Rust by Symphonia)
 | SELECT | Tab | jump to the playing track |
 | MENU | Esc | quit (shuffle, repeat and the last track are remembered) |
 
-Volume is the system volume: use the Mini's VOL+/- buttons (or SELECT+L/R). The slider
-follows it, read from MinUI's shared settings (`/tmp/SharedSettings` on the Mini).
+Volume is the system volume (the device's VOL+/- buttons); the slider follows it (MinUI's
+shared settings on the Mini, PipeWire on muOS). The screen turns off after the idle time
+set in Settings (or with POWER) and the music keeps playing.
 
-## Develop on your computer
+## Develop
 
-```sh
-MUSIC_DIR=~/Music cargo run --release   # preview window; audio through pw-play, paplay or aplay
-cargo test                              # decoder, resampler, FFT, play order, player thread, screen
-cargo run --example snapshot            # snapshots/*.ppm (generated test tones, no audio)
-```
-
-The folder is `MUSIC_DIR` if set, else the one chosen in Settings.pak, else `Music/` on
-the SD card (`~/Music` or `./music` on a desktop); state goes to `./state.txt`
-(`MUSIC_STATE`).
-
-## Build for the Miyoo Mini+
+From the repo root, in the Nix dev shell:
 
 ```sh
-./package.sh     # -> dist/Music.pak   (needs MIYOO_TOOLCHAIN, see below)
+MUSIC_DIR=~/Music cargo run --release -p music   # preview window; audio via pw-play, paplay or aplay
+cargo test -p music                              # decoder, resampler, FFT, play order, player thread, screen
+cargo run -p music --example music_snapshot      # snapshots/*.ppm (generated test tones, no audio)
+./package.sh minui music                         # -> dist/minui/Music.pak
+./package.sh muos music                          # -> dist/muos/Music.muxapp
 ```
 
-Audio on the Mini goes through the SigmaStar vendor library `MI_AO` (`src/ao_shim.c`),
-which is only available for glibc, so this pak is built for `armv7-unknown-linux-gnueabihf`
-with the Miyoo Mini toolchain (Linaro GCC 8.3, glibc 2.28 sysroot with `libmi_ao`) that
-MinUI itself uses:
-<https://github.com/shauninman/miyoomini-toolchain-buildroot/releases/tag/v0.0.3>.
-The vendor libraries are linked statically; only the device's glibc is used at runtime.
-The repo's Nix dev shell downloads it and sets `MIYOO_TOOLCHAIN` and the compiler/linker
-variables (x86_64 Linux only).
+The folder is `MUSIC_DIR` if set, else the `music_dir` setting, else `Music/` on the SD
+card (`~/Music` or `./music` on a desktop); state goes to `MUSIC_STATE` (default
+`./state.txt`).
 
-Copy `dist/Music.pak` into `Tools/miyoomini/` and your music into `Music/` on the SD card.
-Errors go to `.userdata/.../music/log.txt`.
+## Audio per platform
 
-## Status
+- **MinUI (Miyoo Mini+)**: the firmware's audio server owns the hardware, and MinUI
+  preloads `libpadsp.so`, which turns `/dev/dsp` into a pipe to it. `src/ao_shim.c` writes
+  there (with workarounds for two crashes in that library), falling back to the vendor
+  `MI_AO` API when no server runs. Both need glibc, so this one build targets
+  `armv7-unknown-linux-gnueabihf` with the Miyoo Mini toolchain MinUI itself uses (the
+  Nix dev shell downloads it; x86_64 Linux only). The vendor libraries are linked
+  statically; only the device's glibc is needed at runtime.
+- **muOS and desktop**: raw PCM is piped to `pw-play`, `paplay` or `aplay`, whichever
+  works (muOS's `pw-play` is too old for raw input, and its ALSA default goes through
+  PipeWire, so `aplay` follows the system volume).
 
-Verified here: decoding, seeking, resampling, spectrum, play order, settings, the player
-thread and the screen (tests and snapshots), plus the ARM glibc build running under
-`qemu-arm`. **Not yet run on the device**: the MI_AO output follows the Miyoo Mini SDL
-audio driver's settings but hasn't played sound yet. If it fails, `log.txt` shows the
-MI_AO error and the player keeps running silently.
+Logs: `.userdata/miyoomini/music/log.txt` (MinUI), `/root/.config/pocketkit/music/log.txt` (muOS).

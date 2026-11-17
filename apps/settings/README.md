@@ -1,11 +1,14 @@
 # Settings
 
-Settings for MinUI and for our paks, on the Miyoo Mini+. Up/Down picks a row,
-Left/Right (or A) changes it; every change is saved right away.
+Settings for MinUI and for the pocketkit apps, on the Miyoo Mini+ (**MinUI** only; muOS
+has its own settings). Up/Down picks a row, Left/Right (or A) changes it; every change is
+saved right away. B or MENU quits.
+
+![Settings](../../docs/screenshots/settings.png)
 
 | Row | What it does |
 |---|---|
-| Screen off after | Never / 30 s / 1 / 2 / 5 / 10 min of no input, in **our** paks (Music keeps playing). Any button wakes the screen; POWER turns it off right away. |
+| Screen off after | Never / 30 s / 1 / 2 / 5 / 10 min of no input, in **pocketkit apps** (Music keeps playing). Any button wakes the screen; POWER turns it off right away. |
 | Brightness | MinUI's brightness (0-10), same as START + L/R. |
 | Wi-Fi at startup | Turns Wi-Fi on at boot with your saved networks (`Wifi.pak/wifi --up`). |
 | ADB at startup | Also starts ADB at boot (needs ADBD.pak), so `deploy.sh` works without opening anything. No password: trusted networks only. |
@@ -19,8 +22,8 @@ into MinUI and can't be changed from a pak.
 
 ## Where things are stored
 
-- Our paks' settings: `.userdata/miyoomini/minui-paks.txt` (read by `common`, so every
-  pak using `minui_common::run` honours the screen-off time).
+- pocketkit settings: `.userdata/miyoomini/minui-paks.txt` (read by `pocketkit_core`'s
+  main loop, so every app honours the screen-off time; the name predates pocketkit).
 - Startup options: a marked block at the end of `.userdata/miyoomini/auto.sh`, MinUI's
   boot hook. Only the lines between `# >>> minui-paks` and `# <<< minui-paks` are ever
   changed; the original file is copied to `auto.sh.before-settings-pak` before the first
@@ -30,9 +33,11 @@ into MinUI and can't be changed from a pak.
 
 ## Develop
 
+From the repo root, in the Nix dev shell:
+
 ```sh
-cargo run --release           # preview; everything is written under ./sandbox
-cargo test
-cargo run --example snapshot  # snapshots/settings.ppm
-./package.sh                  # -> dist/Settings.pak
+cargo run --release -p settings                   # preview; everything is written under ./sandbox
+cargo test -p settings
+cargo run -p settings --example settings_snapshot # snapshots/settings.ppm
+./package.sh minui settings                       # -> dist/minui/Settings.pak
 ```
