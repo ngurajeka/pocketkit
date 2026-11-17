@@ -52,6 +52,5 @@ connecting and saving go straight to wpa_supplicant's control socket
 (`/var/run/wpa_supplicant/wlan0`), so `wpa_cli` and `iw` aren't needed. A new network is
 only saved if it actually connects.
 
-**Not yet verified on hardware.** Every command it runs and its errors go to
-`Wifi.pak/log.txt`; check that first if something fails. The screen/input backend is the
-shared one in `../common` (same caveats as the other paks).
+Works on a Miyoo Mini+. Every command it runs and its errors go to `Wifi.pak/log.txt`;
+check that first if something fails.

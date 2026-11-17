@@ -12,8 +12,8 @@ export BROWSER_BOOKMARKS="$PWD/bookmarks.txt"
 export BROWSER_DOWNLOAD_DIR="${SDCARD_PATH:-/mnt/SDCARD}/Downloads"
 # Search engine; the query is appended. Uncomment to change it.
 # export BROWSER_SEARCH_URL="https://lite.duckduckgo.com/lite/?q="
-# Uncomment if the picture is upside down.
-# export FB_ROTATE=180
+# Frames are rotated 180 degrees for the Mini's upside-down panel; uncomment to turn that off.
+# export FB_ROTATE=0
 
 # Everything the browser prints (including errors) goes to a log you can read on the PC.
 ./web_browser > "$DATA_DIR/log.txt" 2>&1

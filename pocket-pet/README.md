@@ -40,12 +40,10 @@ for errors.
 
 ## Status
 
-Verified here: game logic, save/load, renderer (all unit tested), desktop build.
-
-**Not yet verified on hardware:** the device backend (`src/platform/device.rs`).
-The framebuffer path/format, the input device and the key codes are best guesses.
-If the screen stays black or garbled, read `log.txt` and check
-`/sys/class/graphics/fb0/{virtual_size,bits_per_pixel,stride}` on the device.
+Game logic, save/load and the renderer are unit tested; the pak runs on a Miyoo Mini+.
+The device backend (`src/platform/device.rs`) rotates every frame 180 degrees because
+the panel is mounted upside down. If the screen ever stays black or garbled, read
+`log.txt` and check `/sys/class/graphics/fb0/{virtual_size,bits_per_pixel,stride}`.
 
 ## Layout
 

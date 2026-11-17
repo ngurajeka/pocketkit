@@ -57,9 +57,8 @@ Verified here: parser, layout, navigation, rendering (unit tests and snapshots),
 HTTPS fetches and downloads on desktop, and the ARM build fetching over HTTPS under
 `qemu-arm`.
 
-**Not yet verified on hardware:** the screen/input backend (`../common`) uses the same
-guesses as pocket-pet about framebuffer format and key codes. If the picture is upside
-down, uncomment `FB_ROTATE=180` in `launch.sh`.
+Works on a Miyoo Mini+. The screen is drawn rotated 180 degrees because the panel is
+mounted upside down (`FB_ROTATE=0` in `launch.sh` turns that off).
 
 If the device clock is wrong (e.g. reset to 1970), certificates are checked against the
 build date instead, so HTTPS keeps working.

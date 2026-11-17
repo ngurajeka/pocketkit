@@ -1,14 +1,12 @@
-//! EXPERIMENTAL backend for the Miyoo Mini+: writes straight to the Linux
-//! framebuffer and reads buttons from evdev. It uses only the standard library.
+//! Backend for the Miyoo Mini+: writes straight to the Linux framebuffer and
+//! reads buttons from evdev, using only the standard library. Works on a Mini+.
 //!
-//! Everything here is a best guess that must be verified on real hardware:
-//! - framebuffer path, size, stride and pixel format (read from sysfs when possible)
-//! - evdev device path and key codes (stock Miyoo Mini firmware layout)
+//! - framebuffer stride and pixel format are read from sysfs when possible
+//! - key codes are the stock Miyoo Mini button layout
+//! - the panel is mounted upside down, so `present` rotates every frame 180 degrees
 //!
-//! If the screen stays black or looks garbled, check
-//! `/sys/class/graphics/fb0/{virtual_size,bits_per_pixel,stride}` on the device
-//! and adjust the constants below. If raw framebuffer access doesn't work with
-//! MinUI's display setup, the fallback is an SDL-based backend.
+//! If the screen ever stays black or looks garbled, check
+//! `/sys/class/graphics/fb0/{virtual_size,bits_per_pixel,stride}` on the device.
 
 use std::{
     fs::{self, File, OpenOptions},
@@ -132,8 +130,10 @@ impl Platform for Device {
         let bpp = self.bytes_per_pixel;
         for y in 0..canvas.h {
             let row = y * SCALE * self.stride;
+            // Read the canvas back to front: the panel is upside down.
+            let src_row = (canvas.h - 1 - y) * canvas.w;
             for x in 0..canvas.w {
-                let bytes = self.encode(canvas.px[y * canvas.w + x]);
+                let bytes = self.encode(canvas.px[src_row + canvas.w - 1 - x]);
                 for sx in 0..SCALE {
                     let o = row + (x * SCALE + sx) * bpp;
                     self.frame[o..o + bpp].copy_from_slice(&bytes[..bpp]);

@@ -1,9 +1,10 @@
-//! EXPERIMENTAL backend for the Miyoo Mini+: writes straight to the Linux
-//! framebuffer and reads buttons from evdev. Based on pocket-pet's backend (but
-//! at the native 640x480, no scaling), and just as unverified on real hardware:
-//! - framebuffer path, stride and pixel format (read from sysfs when possible)
-//! - evdev device path and key codes (stock Miyoo Mini firmware layout)
-//! - orientation: set `FB_ROTATE=180` in launch.sh if the picture is upside down
+//! Backend for the Miyoo Mini+: writes straight to the Linux framebuffer and
+//! reads buttons from evdev. Based on pocket-pet's backend, but at the native
+//! 640x480 (no scaling). Works on a Mini+:
+//! - framebuffer stride and pixel format are read from sysfs when possible
+//! - key codes are the stock Miyoo Mini button layout
+//! - the panel is mounted upside down, so frames are drawn rotated 180 degrees
+//!   (`FB_ROTATE=0` turns that off)
 //!
 //! If the screen stays black or looks garbled, check
 //! `/sys/class/graphics/fb0/{virtual_size,bits_per_pixel,stride}` on the device.
@@ -79,7 +80,7 @@ impl Device {
         if !(2..=4).contains(&bytes_per_pixel) || W * bytes_per_pixel > stride {
             return Err(io::Error::other(format!("unsupported framebuffer: {bpp} bpp, stride {stride}")));
         }
-        let rotate = std::env::var("FB_ROTATE").is_ok_and(|v| v.trim() == "180");
+        let rotate = std::env::var("FB_ROTATE").map_or(true, |v| v.trim() != "0");
         eprintln!("framebuffer: {bpp} bpp, stride {stride}, rotate {rotate}");
 
         Ok(Self { fb, input, bytes_per_pixel, stride, rotate, frame: vec![0; stride * H], held: None })
