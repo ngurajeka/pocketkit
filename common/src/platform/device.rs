@@ -50,6 +50,7 @@ fn map_key(code: u16) -> Option<Button> {
         28 => Button::Start,  // KEY_ENTER
         97 => Button::Select, // KEY_RIGHTCTRL
         1 => Button::Menu,    // KEY_ESC
+        116 => Button::Power, // KEY_POWER
         _ => return None,
     })
 }
@@ -139,6 +140,24 @@ impl Platform for Device {
             }
         }
         true
+    }
+
+    /// Same sysfs sequence as MinUI's `PLAT_enableBacklight` (miyoomini/platform.c).
+    fn set_backlight(&mut self, on: bool) {
+        let put = |path: &str, value: &str| {
+            let _ = fs::write(path, value);
+        };
+        if on {
+            put("/sys/class/gpio/gpio4/value", "1");
+            put("/sys/class/gpio/unexport", "4");
+            put("/sys/class/pwm/pwmchip0/export", "0");
+            put("/sys/class/pwm/pwmchip0/pwm0/enable", "0");
+            put("/sys/class/pwm/pwmchip0/pwm0/enable", "1");
+        } else {
+            put("/sys/class/gpio/export", "4");
+            put("/sys/class/gpio/gpio4/direction", "out");
+            put("/sys/class/gpio/gpio4/value", "0");
+        }
     }
 
     fn present(&mut self, canvas: &Canvas) {

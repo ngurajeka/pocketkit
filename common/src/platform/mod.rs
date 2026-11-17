@@ -6,6 +6,8 @@ pub trait Platform {
     fn poll(&mut self, pressed: &mut Vec<Button>) -> bool;
     /// Show the finished frame.
     fn present(&mut self, canvas: &Canvas);
+    /// Turn the backlight off (screen off, app keeps running) or back on.
+    fn set_backlight(&mut self, _on: bool) {}
 }
 
 #[cfg(feature = "desktop")]

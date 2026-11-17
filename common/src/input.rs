@@ -17,6 +17,8 @@ pub enum Button {
     Select,
     /// The MENU button. MinUI convention: quit the app.
     Menu,
+    /// The power button. `run` uses it to switch the screen off and on.
+    Power,
 }
 
 impl Button {
