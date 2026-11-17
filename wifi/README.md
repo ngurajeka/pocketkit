@@ -17,7 +17,7 @@ so other paks (like Web Browser) can use it.
 | Y | V | forget the selected saved network |
 | X | C | scan again |
 | START | Enter | turn Wi-Fi off / on |
-| MENU | Esc | quit (Wi-Fi stays as it is) |
+| B / MENU | X / Esc | quit (Wi-Fi stays as it is) |
 
 On the password keyboard: A types, B deletes, Y space, X switches abc / ABC / symbols,
 L1 clears, START connects, SELECT goes back.

@@ -4,8 +4,9 @@ use std::sync::mpsc::{Receiver, Sender};
 
 use minui_common::{
     input::Button,
-    keyboard::{KbResult, Keyboard, COLS as KB_COLS, PAGE_NAMES, ROWS as KB_ROWS},
-    render::{fit, fit_end, Canvas, H, W},
+    keyboard::{KbResult, Keyboard},
+    render::Canvas,
+    ui::{self, Ui},
 };
 
 use crate::{
@@ -14,24 +15,8 @@ use crate::{
     wpa::{self, Network, Saved, Security, Status},
 };
 
-const BG: u32 = 0xFAF8F2;
-const FG: u32 = 0x24262B;
-const DIM: u32 = 0x8A8F98;
-const SEL_BG: u32 = 0x1F5FBF;
-const SEL_FG: u32 = 0xFFFFFF;
-const BAR: u32 = 0x2B2D42;
-const BAR_FG: u32 = 0xEDF2F4;
-const GOOD: u32 = 0x2E9E5B;
-const WARN: u32 = 0xC0392B;
-const KEY_BG: u32 = 0xE4E1D8;
-
-const SCALE: usize = 2;
-const LINE: usize = 20;
-const MARGIN: i32 = 8;
-const COLS: usize = (W - 2 * MARGIN as usize) / 16;
-/// Rows for the network list (below the two status lines and a gap).
-const LIST_TOP: usize = 4;
-const LIST_ROWS: usize = H / LINE - LIST_TOP - 1;
+/// Networks shown at once (MinUI fits five rows under a title).
+const VISIBLE_ROWS: usize = 5;
 const FLASH_SECS: f32 = 5.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +41,8 @@ pub struct App {
     pub busy: Option<String>,
     flash: Option<(String, f32)>,
     time: f32,
+    quitting: bool,
+    ui: Ui,
 }
 
 impl App {
@@ -74,6 +61,8 @@ impl App {
             busy: None,
             flash: None,
             time: 0.0,
+            quitting: false,
+            ui: Ui::new(),
         }
     }
 
@@ -136,12 +125,13 @@ impl App {
         match button {
             Button::Up if n > 0 => self.sel = (self.sel + n - 1) % n,
             Button::Down if n > 0 => self.sel = (self.sel + 1) % n,
-            Button::L1 | Button::Left => self.sel = self.sel.saturating_sub(LIST_ROWS),
-            Button::R1 | Button::Right if n > 0 => self.sel = (self.sel + LIST_ROWS).min(n - 1),
+            Button::L1 | Button::Left => self.sel = self.sel.saturating_sub(VISIBLE_ROWS),
+            Button::R1 | Button::Right if n > 0 => self.sel = (self.sel + VISIBLE_ROWS).min(n - 1),
             Button::Start => {
                 let cmd = if self.on == Some(true) { Cmd::PowerOff } else { Cmd::PowerOn };
                 self.send(cmd);
             }
+            Button::B => self.quitting = true,
             _ if self.on != Some(true) => {
                 if matches!(button, Button::A | Button::X | Button::Y | Button::Select) {
                     self.flash("Wi-Fi is off. Press START to turn it on.");
@@ -215,139 +205,93 @@ impl App {
     // ---------------------------------------------------------------- drawing
 
     pub fn render(&self, c: &mut Canvas) {
-        c.fill(BG);
         match self.screen {
             Screen::List => self.draw_list(c),
-            Screen::Password => self.draw_password(c),
+            Screen::Password => {
+                let ssid = self.pending.as_ref().map_or("", |t| t.ssid.as_str());
+                self.ui.keyboard(c, &self.kb, &format!("Password for {ssid}"), "CONNECT", self.time);
+            }
         }
-        self.draw_status_bar(c);
+        // Busy (with animated dots) wins over a message.
+        if let Some(busy) = &self.busy {
+            let dots = ".".repeat((self.time * 3.0) as usize % 4);
+            self.ui.toast(c, &format!("{busy}{dots}"));
+        } else if let Some(msg) = self.flash_text() {
+            self.ui.toast(c, msg);
+        }
     }
 
-    fn title(&self, c: &mut Canvas, text: &str) {
-        c.rect(0, 0, W as i32, LINE as i32, BAR);
-        c.text(MARGIN, 2, &fit(text, COLS - 5), SCALE, BAR_FG);
-        let state = match self.on {
-            Some(true) => "ON",
-            Some(false) => "OFF",
-            None => "",
-        };
-        c.text(W as i32 - MARGIN - 16 * state.len() as i32, 2, state, SCALE, BAR_FG);
-    }
-
-    fn row_y(row: usize) -> i32 {
-        (row * LINE + 2) as i32
+    fn title_text(&self) -> String {
+        match self.on {
+            Some(false) => "Wi-Fi is off".into(),
+            None => "Wi-Fi".into(),
+            _ if self.status.connected() => {
+                let ssid = self.status.ssid.as_deref().unwrap_or("?");
+                match &self.status.ip {
+                    Some(ip) => format!("{ssid}  {ip}"),
+                    None => format!("{ssid}  getting address..."),
+                }
+            }
+            _ => "Wi-Fi: not connected".into(),
+        }
     }
 
     fn draw_list(&self, c: &mut Canvas) {
-        self.title(c, "Wi-Fi");
-        let (line1, line2, color) = match self.on {
-            Some(false) => ("Wi-Fi is off".to_string(), "Press START to turn it on".to_string(), DIM),
-            _ if self.status.connected() => (
-                format!("Connected to {}", self.status.ssid.as_deref().unwrap_or("?")),
-                match &self.status.ip {
-                    Some(ip) => format!("IP {ip}"),
-                    None => "Getting an IP address...".into(),
-                },
-                GOOD,
-            ),
-            None => ("Starting...".to_string(), String::new(), DIM),
-            _ => ("Not connected".to_string(), "Pick a network and press A".to_string(), FG),
-        };
-        c.text(MARGIN, Self::row_y(1), &fit(&line1, COLS), SCALE, color);
-        c.text(MARGIN, Self::row_y(2), &fit(&line2, COLS), SCALE, DIM);
-        c.rect(0, (LIST_TOP * LINE) as i32 - 6, W as i32, 2, KEY_BG);
-
-        if self.nets.is_empty() && self.on == Some(true) && self.busy.is_none() {
-            c.text(MARGIN, Self::row_y(LIST_TOP), "No networks found. X to scan.", SCALE, DIM);
-        }
-        let first = self.sel.saturating_sub(LIST_ROWS - 1);
-        for (row, (i, net)) in self.nets.iter().enumerate().skip(first).take(LIST_ROWS).enumerate() {
-            let y = Self::row_y(LIST_TOP + row);
-            let selected = i == self.sel;
-            if selected {
-                c.rect(0, y - 2, W as i32, LINE as i32, SEL_BG);
+        self.ui.clear(c);
+        self.ui.title(c, &self.title_text());
+        match self.on {
+            Some(false) => self.ui.message(c, "Wi-Fi is off\nPress START to turn it on"),
+            Some(true) if self.nets.is_empty() && self.busy.is_none() => {
+                self.ui.message(c, "No networks found\nPress X to scan")
             }
-            let fg = if selected { SEL_FG } else { FG };
-            draw_bars(c, MARGIN, y, wpa::signal_bars(net.signal), if selected { SEL_FG } else { FG }, if selected { 0x6F95D6 } else { KEY_BG });
-
-            let saved = self.saved_for(&net.ssid);
+            _ => {}
+        }
+        let first = self.sel.saturating_sub(VISIBLE_ROWS - 1);
+        for (row, (i, net)) in self.nets.iter().enumerate().skip(first).take(VISIBLE_ROWS).enumerate() {
+            let selected = i == self.sel;
             let current = self.status.connected() && self.status.ssid.as_deref() == Some(net.ssid.as_str());
-            let (tag, tag_color) = if current {
-                ("connected", if selected { SEL_FG } else { GOOD })
-            } else if saved.is_some() {
-                ("saved", if selected { SEL_FG } else { DIM })
+            let tag = if current {
+                "connected"
+            } else if self.saved_for(&net.ssid).is_some() {
+                "saved"
             } else {
                 match net.security {
-                    Security::Open => ("open", if selected { SEL_FG } else { DIM }),
-                    Security::Psk => ("", fg),
-                    Security::Wep => ("WEP", if selected { SEL_FG } else { WARN }),
-                    Security::Enterprise => ("802.1X", if selected { SEL_FG } else { WARN }),
+                    Security::Open => "open",
+                    Security::Psk => "",
+                    Security::Wep => "WEP",
+                    Security::Enterprise => "802.1X",
                 }
             };
-            let tag_cols = tag.len();
-            let name_cols = COLS - 3 - if tag_cols > 0 { tag_cols + 1 } else { 0 };
-            c.text(MARGIN + 40, y, &fit(&net.ssid, name_cols), SCALE, fg);
-            if tag_cols > 0 {
-                c.text(W as i32 - MARGIN - 16 * tag_cols as i32, y, tag, SCALE, tag_color);
+            let unsupported = matches!(net.security, Security::Wep | Security::Enterprise);
+            let bx = self.ui.row_ex(c, row, &net.ssid, (selected, unsupported), (!tag.is_empty()).then_some(tag), BARS_W);
+            let on = if selected { ui::BLACK } else { ui::WHITE };
+            let off = if selected { 0xC8C8C8 } else { ui::DARK_GRAY };
+            draw_bars(c, bx, Ui::row_y(row) + (ui::PILL - 22) / 2, wpa::signal_bars(net.signal), on, off);
+        }
+        self.ui.scroll_marks(c, first, VISIBLE_ROWS, self.nets.len());
+        let power = if self.on == Some(true) { "OFF" } else { "ON" };
+        if self.on == Some(true) {
+            self.ui.hints(c, &[("START", power), ("X", "SCAN")], false);
+            let forget = self.selected().is_some_and(|n| self.saved_for(&n.ssid).is_some());
+            if forget {
+                self.ui.hints(c, &[("Y", "FORGET"), ("A", "CONNECT")], true);
+            } else {
+                self.ui.hints(c, &[("A", "CONNECT")], true);
             }
-        }
-    }
-
-    fn draw_password(&self, c: &mut Canvas) {
-        let ssid = self.pending.as_ref().map_or("", |t| t.ssid.as_str());
-        self.title(c, &format!("Password: {ssid}"));
-        let box_y = LINE as i32 + 12;
-        c.rect(MARGIN, box_y, W as i32 - 2 * MARGIN, 28, 0xFFFFFF);
-        c.rect(MARGIN, box_y + 27, W as i32 - 2 * MARGIN, 2, SEL_BG);
-        let end = c.text(MARGIN + 6, box_y + 6, &fit_end(&self.kb.text, COLS - 2), SCALE, FG);
-        if (self.time * 2.0) as i32 % 2 == 0 {
-            c.rect(end + 1, box_y + 4, 2, 20, SEL_BG);
-        }
-        let (kw, kh, gap) = (56, 44, 4);
-        let x0 = (W as i32 - (KB_COLS as i32 * (kw + gap) - gap)) / 2;
-        let y0 = box_y + 44;
-        for row in 0..KB_ROWS {
-            for col in 0..KB_COLS {
-                let x = x0 + col as i32 * (kw + gap);
-                let y = y0 + row as i32 * (kh + gap);
-                let selected = row == self.kb.row && col == self.kb.col;
-                c.rect(x, y, kw, kh, if selected { SEL_BG } else { KEY_BG });
-                c.glyph(x + (kw - 16) / 2, y + (kh - 16) / 2, self.kb.key_at(row, col), SCALE, if selected { SEL_FG } else { FG });
-            }
-        }
-        let hints = [
-            format!("A type B delete Y space X {}", PAGE_NAMES[(self.kb.page + 1) % PAGE_NAMES.len()]),
-            "L1 clear START connect SELECT back".to_string(),
-        ];
-        let hy = y0 + KB_ROWS as i32 * (kh + gap) + 8;
-        for (i, h) in hints.iter().enumerate() {
-            c.text(MARGIN, hy + i as i32 * LINE as i32, &fit(h, COLS), SCALE, DIM);
-        }
-    }
-
-    fn draw_status_bar(&self, c: &mut Canvas) {
-        let y = (H - LINE) as i32;
-        c.rect(0, y, W as i32, LINE as i32, BAR);
-        let text = if let Some(busy) = &self.busy {
-            format!("{busy}{}", ".".repeat((self.time * 3.0) as usize % 4))
-        } else if let Some(msg) = self.flash_text() {
-            msg.to_string()
         } else {
-            match (self.screen, self.on) {
-                (Screen::Password, _) => String::new(),
-                (_, Some(true)) => "A connect X scan Y forget START off".into(),
-                _ => "START turn on  MENU quit".into(),
-            }
-        };
-        c.text(MARGIN, y + 2, &fit(&text, COLS), SCALE, BAR_FG);
+            self.ui.hints(c, &[("START", power)], false);
+            self.ui.hints(c, &[("B", "QUIT")], true);
+        }
     }
 }
 
-/// Four rising bars; `n` of them filled.
+const BARS_W: i32 = 30;
+
+/// Four rising bars (30 x 22 px); `n` of them filled.
 fn draw_bars(c: &mut Canvas, x: i32, y: i32, n: usize, on: u32, off: u32) {
     for i in 0..4 {
-        let h = 4 + 4 * i as i32;
-        c.rect(x + i as i32 * 7, y + 16 - h, 5, h, if i < n { on } else { off });
+        let h = 7 + 5 * i as i32;
+        ui::rounded_rect(c, x + i as i32 * 8, y + 22 - h, 6, h, 2, if i < n { on } else { off });
     }
 }
 
@@ -361,6 +305,9 @@ impl minui_common::App for App {
     fn render(&self, canvas: &mut Canvas) {
         App::render(self, canvas);
     }
+    fn quit(&self) -> bool {
+        self.quitting
+    }
 }
 
 #[cfg(test)]
@@ -368,6 +315,7 @@ mod tests {
     use std::sync::mpsc;
 
     use super::*;
+    use minui_common::render::{H, W};
 
     fn net(ssid: &str, security: Security) -> Network {
         Network { ssid: ssid.into(), signal: -50, security }
