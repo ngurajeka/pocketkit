@@ -1,8 +1,9 @@
 [package]
 name = "settings"
 version = "0.1.0"
-edition = "2021"
-description = "Settings for MinUI on the Miyoo Mini+ and for our paks"
+edition.workspace = true
+license.workspace = true
+description = "Settings for MinUI on the Miyoo Mini+ and for pocketkit apps"
 
 [dependencies]
 pocketkit_core = { path = "../../crates/core" }

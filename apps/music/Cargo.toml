@@ -1,8 +1,9 @@
 [package]
 name = "music"
 version = "0.1.0"
-edition = "2021"
-description = "Music player with a classic desktop-player look, for the Miyoo Mini+ (MinUI)"
+edition.workspace = true
+license.workspace = true
+description = "Music player with a classic desktop-player look, for retro handhelds (MinUI, muOS)"
 
 [dependencies]
 pocketkit_core = { path = "../../crates/core" }

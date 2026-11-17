@@ -1,7 +1,8 @@
 [package]
 name = "pocket_pet"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
+license.workspace = true
 description = "A tiny virtual pet game for the Miyoo Mini+ (MinUI)"
 
 [dependencies]
