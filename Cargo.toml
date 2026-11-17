@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/platform",
+    "apps/web-browser",
+    "apps/music",
+    "apps/wifi",
+    "apps/settings",
+    "apps/pocket-pet",
+]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

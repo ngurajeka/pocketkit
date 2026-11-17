@@ -1,0 +1,11 @@
+# Bookmarks for Web Browser, one per line:   NAME | URL
+# Edit this file on your computer. Text-only sites work best.
+
+Search (Brave) | https://search.brave.com/
+NPR (text) | https://text.npr.org/
+CNN Lite | https://lite.cnn.com/
+CBC Lite | https://www.cbc.ca/lite/news
+Wikipedia | https://en.m.wikipedia.org/
+Hacker News | https://news.ycombinator.com/
+68k.news | http://68k.news/
+Project Gutenberg | https://www.gutenberg.org/

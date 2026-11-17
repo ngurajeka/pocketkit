@@ -1,0 +1,15 @@
+[package]
+name = "wifi"
+version = "0.1.0"
+edition = "2021"
+description = "Wi-Fi network picker for the Miyoo Mini+ (MinUI)"
+
+[dependencies]
+pocketkit_core = { path = "../../crates/core" }
+pocketkit_platform = { path = "../../crates/platform" }
+
+[features]
+default = ["desktop"]
+desktop = ["pocketkit_platform/desktop"]
+minui = ["pocketkit_platform/minui"]
+muos = ["pocketkit_platform/muos"]

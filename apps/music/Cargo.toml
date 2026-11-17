@@ -1,0 +1,22 @@
+[package]
+name = "music"
+version = "0.1.0"
+edition = "2021"
+description = "Music player with a classic desktop-player look, for the Miyoo Mini+ (MinUI)"
+
+[dependencies]
+pocketkit_core = { path = "../../crates/core" }
+pocketkit_platform = { path = "../../crates/platform" }
+# Pure-Rust decoders: no C, so they cross-compile like everything else.
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "flac", "vorbis", "ogg", "wav", "pcm", "aac", "isomp4"] }
+
+[build-dependencies]
+cc = "1"
+
+[features]
+default = ["desktop"]
+desktop = ["pocketkit_platform/desktop"]
+minui = ["pocketkit_platform/minui"]
+muos = ["pocketkit_platform/muos"]
+# MinUI audio goes through the vendor MI_AO / audioserver path in src/ao_shim.c
+# (glibc target + Miyoo toolchain); muOS and desktop pipe PCM to pw-play/aplay.

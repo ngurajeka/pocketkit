@@ -1,0 +1,15 @@
+[package]
+name = "pocketkit_platform"
+version = "0.1.0"
+edition = "2021"
+description = "pocketkit platforms: desktop preview, MinUI (Miyoo Mini+), muOS (RG35XX-SP)"
+
+[dependencies]
+pocketkit_core = { path = "../core" }
+minifb = { version = "0.27", optional = true }
+
+[features]
+default = []
+desktop = ["dep:minifb"]
+minui = []
+muos = []

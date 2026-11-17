@@ -1,0 +1,10 @@
+[package]
+name = "pocketkit_core"
+version = "0.1.0"
+edition = "2021"
+description = "pocketkit core: canvas, buttons, keyboard, MinUI-style UI, settings and main loop"
+
+[dependencies]
+font8x8 = "0.3"
+# Renders the UI font (MinUI's BPreplay from the SD card, or a bundled OFL font).
+fontdue = "0.9"

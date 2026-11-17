@@ -1,0 +1,20 @@
+[package]
+name = "web_browser"
+version = "0.1.0"
+edition = "2021"
+description = "A tiny text-mode web browser and downloader for the Miyoo Mini+ (MinUI)"
+
+[dependencies]
+pocketkit_core = { path = "../../crates/core" }
+pocketkit_platform = { path = "../../crates/platform" }
+percent-encoding = "2"
+ureq = { version = "2", default-features = false, features = ["tls", "gzip"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+webpki-roots = "0.26"
+url = "2"
+
+[features]
+default = ["desktop"]
+desktop = ["pocketkit_platform/desktop"]
+minui = ["pocketkit_platform/minui"]
+muos = ["pocketkit_platform/muos"]
