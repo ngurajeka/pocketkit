@@ -22,7 +22,8 @@
             extensions = [ "rust-src" "rust-analyzer" "clippy" "rustfmt" ];
             # Miyoo Mini / Mini+ (Cortex-A7, hard-float): static musl for most paks,
             # glibc (via the Miyoo toolchain below) for the music pak's vendor audio library.
-            targets = [ "armv7-unknown-linux-musleabihf" "armv7-unknown-linux-gnueabihf" ];
+            # RG35XX-SP / H700 (muOS): aarch64, also static musl.
+            targets = [ "armv7-unknown-linux-musleabihf" "armv7-unknown-linux-gnueabihf" "aarch64-unknown-linux-musl" ];
           };
           # The Miyoo Mini toolchain MinUI itself builds with: Linaro GCC 8.3 and a
           # glibc 2.28 sysroot holding the SigmaStar vendor libraries (libmi_ao for
@@ -61,8 +62,8 @@
         in
         {
           default = pkgs.mkShell ({
-            # android-tools: adb, used by deploy.sh to copy paks to the Mini over Wi-Fi.
-            packages = [ rust pkgs.pkg-config pkgs.android-tools ] ++ desktopLibs;
+            # android-tools: adb (MinUI deploys); sshpass: muOS's root password login.
+            packages = [ rust pkgs.pkg-config pkgs.android-tools pkgs.zip pkgs.sshpass ] ++ desktopLibs;
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath desktopLibs;
             # package.sh: plain cargo + rust-lld against Rust's bundled (self-contained)
             # musl — no Docker/cross, no zig, no full C cross toolchain.
@@ -74,6 +75,11 @@
             CC_armv7_unknown_linux_musleabihf = "${pkgs.llvmPackages.clang-unwrapped}/bin/clang";
             CFLAGS_armv7_unknown_linux_musleabihf = "--target=armv7-unknown-linux-musleabihf";
             AR_armv7_unknown_linux_musleabihf = "${pkgs.llvmPackages.llvm}/bin/llvm-ar";
+            # Same for the muOS builds (aarch64 musl).
+            CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER = "rust-lld";
+            CC_aarch64_unknown_linux_musl = "${pkgs.llvmPackages.clang-unwrapped}/bin/clang";
+            CFLAGS_aarch64_unknown_linux_musl = "--target=aarch64-unknown-linux-musl";
+            AR_aarch64_unknown_linux_musl = "${pkgs.llvmPackages.llvm}/bin/llvm-ar";
           } // pkgs.lib.optionalAttrs hasMiyooToolchain {
             # glibc target (music pak): link and compile C with the Miyoo toolchain.
             MIYOO_TOOLCHAIN = "${miyooToolchain}";
