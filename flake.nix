@@ -1,5 +1,5 @@
 {
-  description = "MinUI paks for the Miyoo Mini / Mini+";
+  description = "pocketkit: Rust apps for retro handhelds (MinUI on the Miyoo Mini+, muOS on the RG35XX-SP)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -20,8 +20,8 @@
         let
           rust = pkgs.rust-bin.stable.latest.default.override {
             extensions = [ "rust-src" "rust-analyzer" "clippy" "rustfmt" ];
-            # Miyoo Mini / Mini+ (Cortex-A7, hard-float): static musl for most paks,
-            # glibc (via the Miyoo toolchain below) for the music pak's vendor audio library.
+            # Miyoo Mini / Mini+ (MinUI, Cortex-A7 hard-float): static musl for most
+            # apps, glibc (via the Miyoo toolchain below) for Music's firmware audio path.
             # RG35XX-SP / H700 (muOS): aarch64, also static musl.
             targets = [ "armv7-unknown-linux-musleabihf" "armv7-unknown-linux-gnueabihf" "aarch64-unknown-linux-musl" ];
           };
@@ -62,12 +62,12 @@
         in
         {
           default = pkgs.mkShell ({
-            # android-tools: adb (MinUI deploys); sshpass: muOS's root password login.
+            # android-tools: adb (deploy.sh to MinUI); sshpass: muOS's root password
+            # login (deploy.sh --muos); zip: muOS .muxapp archives (package.sh).
             packages = [ rust pkgs.pkg-config pkgs.android-tools pkgs.zip pkgs.sshpass ] ++ desktopLibs;
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath desktopLibs;
-            # package.sh: plain cargo + rust-lld against Rust's bundled (self-contained)
-            # musl — no Docker/cross, no zig, no full C cross toolchain.
-            BUILD_CMD = "cargo build";
+            # Static builds: plain cargo + rust-lld against Rust's bundled
+            # (self-contained) musl — no Docker/cross, no zig, no full C cross toolchain.
             CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER = "rust-lld";
             # Bare clang for crates with small, libc-free C parts (e.g. ring, used by
             # rustls for HTTPS). There are no musl headers here, so C code that
@@ -81,7 +81,7 @@
             CFLAGS_aarch64_unknown_linux_musl = "--target=aarch64-unknown-linux-musl";
             AR_aarch64_unknown_linux_musl = "${pkgs.llvmPackages.llvm}/bin/llvm-ar";
           } // pkgs.lib.optionalAttrs hasMiyooToolchain {
-            # glibc target (music pak): link and compile C with the Miyoo toolchain.
+            # glibc target (MinUI Music): link and compile C with the Miyoo toolchain.
             MIYOO_TOOLCHAIN = "${miyooToolchain}";
             CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER = "${miyooToolchain}/bin/arm-linux-gnueabihf-gcc";
             CC_armv7_unknown_linux_gnueabihf = "${miyooToolchain}/bin/arm-linux-gnueabihf-gcc";
