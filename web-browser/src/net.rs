@@ -31,8 +31,14 @@ use crate::html::Doc;
 /// `BROWSER_SEARCH_URL`; the query is appended to it.
 pub const SEARCH_URL: &str = "https://search.brave.com/search?q=";
 
+/// `BROWSER_SEARCH_URL` if set, else the engine chosen in Settings.pak, else Brave.
 fn search_url() -> String {
-    std::env::var("BROWSER_SEARCH_URL").ok().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| SEARCH_URL.into())
+    use minui_common::settings::{self, Settings};
+    std::env::var("BROWSER_SEARCH_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| Settings::load(&settings::default_path()).get(settings::SEARCH_URL).map(str::to_string))
+        .unwrap_or_else(|| SEARCH_URL.into())
 }
 /// Pages bigger than this are cut off (the rest wouldn't be readable on a handheld anyway).
 const MAX_PAGE: usize = 3 * 1024 * 1024;
