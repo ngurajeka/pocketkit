@@ -114,9 +114,10 @@ impl Platform for Device {
                         let kind = u16::from_le_bytes([ev[o], ev[o + 1]]);
                         let code = u16::from_le_bytes([ev[o + 2], ev[o + 3]]);
                         let value = i32::from_le_bytes([ev[o + 4], ev[o + 5], ev[o + 6], ev[o + 7]]);
-                        let Some(button) = (kind == EV_KEY).then(|| map_key(code)).flatten() else {
+                        if kind != EV_KEY {
                             continue;
-                        };
+                        }
+                        let button = map_key(code).unwrap_or(Button::Other);
                         match value {
                             1 => {
                                 pressed.push(button);

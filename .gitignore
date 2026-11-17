@@ -3,3 +3,4 @@ dist/
 .direnv/
 .miyoo-ip
 .backups/
+.minui-res/

@@ -6,6 +6,8 @@ description = "Shared screen, input and on-screen keyboard code for the Rust Min
 
 [dependencies]
 font8x8 = "0.3"
+# Renders MinUI's own font (BPreplay, loaded from the SD card at runtime).
+fontdue = "0.9"
 # Only used for the desktop preview window.
 minifb = { version = "0.27", optional = true }
 

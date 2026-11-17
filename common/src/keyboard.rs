@@ -60,7 +60,7 @@ impl Keyboard {
             Button::R1 => self.push(".com"),
             Button::Start => return KbResult::Submit(self.text.clone()),
             Button::Select => return KbResult::Cancel,
-            Button::L2 | Button::R2 | Button::Menu | Button::Power => {}
+            Button::L2 | Button::R2 | Button::Menu | Button::Power | Button::Other => {}
         }
         KbResult::Pending
     }

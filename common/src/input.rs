@@ -19,6 +19,9 @@ pub enum Button {
     Menu,
     /// The power button. `run` uses it to switch the screen off and on.
     Power,
+    /// Any other key (VOL+/-, ...): apps ignore it, but it counts as activity
+    /// for the screen-off timer.
+    Other,
 }
 
 impl Button {

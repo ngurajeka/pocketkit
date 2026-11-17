@@ -9,6 +9,7 @@ pub mod minui;
 pub mod platform;
 pub mod render;
 pub mod settings;
+pub mod ui;
 
 use std::{
     thread,
@@ -23,6 +24,10 @@ pub trait App {
     fn handle(&mut self, button: Button);
     fn update(&mut self, dt: f32);
     fn render(&self, canvas: &mut Canvas);
+    /// Return true to leave (e.g. after B on the top screen). MENU always quits.
+    fn quit(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(feature = "desktop")]
@@ -117,6 +122,9 @@ pub fn run(title: &str, app: &mut impl App) {
                 break 'main;
             }
             app.handle(button);
+            if app.quit() {
+                break 'main;
+            }
         }
         let dt = last.elapsed().min(Duration::from_millis(250));
         last = Instant::now();
