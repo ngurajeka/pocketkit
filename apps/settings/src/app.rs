@@ -394,7 +394,7 @@ impl App {
             let lh = self.ui.font.height(ui::FONT_TINY) + 2;
             let max = W as i32 - 2 * ui::PADDING - 2 * ui::BUTTON_PADDING;
             for (k, line) in self.ui.font.wrap(row.help(), ui::FONT_TINY, max).iter().take(2).enumerate() {
-                self.ui.font.draw(c, ui::PADDING + ui::BUTTON_PADDING, y0 + k as i32 * lh, line, ui::FONT_TINY, ui::GRAY);
+                self.ui.font.draw(c, ui::PADDING + ui::BUTTON_PADDING, y0 + k as i32 * lh, line, ui::FONT_TINY, self.ui.pal.soft);
             }
         }
         if let Some(m) = self.flash_text() {

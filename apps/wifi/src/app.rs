@@ -264,8 +264,9 @@ impl App {
             };
             let unsupported = matches!(net.security, Security::Wep | Security::Enterprise);
             let bx = self.ui.row_ex(c, row, &net.ssid, (selected, unsupported), (!tag.is_empty()).then_some(tag), BARS_W);
-            let on = if selected { ui::BLACK } else { ui::WHITE };
-            let off = if selected { 0xC8C8C8 } else { ui::DARK_GRAY };
+            let pal = self.ui.pal;
+            let on = if selected { pal.sel_text } else { pal.text };
+            let off = if selected { pal.sel_soft } else { pal.surface };
             draw_bars(c, bx, Ui::row_y(row) + (ui::PILL - 22) / 2, wpa::signal_bars(net.signal), on, off);
         }
         self.ui.scroll_marks(c, first, VISIBLE_ROWS, self.nets.len());

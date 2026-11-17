@@ -15,6 +15,8 @@ cd "$APP_DIR" || exit 1
 export POCKETKIT_DATA="${XDG_CONFIG_HOME:-$HOME/.config}/pocketkit"
 mkdir -p "$POCKETKIT_DATA/web-browser"
 export POCKETKIT_FONT="$APP_DIR/font.ttf"
+# Draw in the muOS style (header/footer bars, mustard highlight).
+export POCKETKIT_STYLE=muos
 export BROWSER_BOOKMARKS="$APP_DIR/bookmarks.txt"
 export BROWSER_DOWNLOAD_DIR="/mnt/mmc/Downloads"
 

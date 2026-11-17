@@ -5,7 +5,12 @@
 //! Mini's 2x scale): black background, 60 px rows, white pill behind the
 //! selected item, round button hints in a dark-gray pill at the bottom.
 
-use std::{cell::RefCell, collections::HashMap, env, fs, path::PathBuf};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    env, fs,
+    path::PathBuf,
+};
 
 use fontdue::{Font as FontData, FontSettings, Metrics};
 
@@ -264,36 +269,128 @@ pub fn pill(c: &mut Canvas, x: i32, y: i32, w: i32, h: i32, color: u32) {
     rounded_rect(c, x, y, w.max(h), h, h / 2, color);
 }
 
+/// Which system's look to follow. Layout and sizes are shared; colours and a
+/// few shapes differ so apps feel at home on each.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Style {
+    /// MinUI: black, white pill on the selection, dark-gray hint pills.
+    MinUI,
+    /// muOS: charcoal, black header and footer bars, mustard highlight.
+    Muos,
+}
+
+impl Style {
+    /// From `POCKETKIT_STYLE` (`minui` / `muos`; muOS launchers set it), MinUI otherwise.
+    pub fn from_env() -> Self {
+        match env::var("POCKETKIT_STYLE").map(|s| s.to_ascii_lowercase()) {
+            Ok(s) if s == "muos" => Style::Muos,
+            _ => Style::MinUI,
+        }
+    }
+}
+
+/// The colours a style draws with (apps use it for their own drawing too).
+#[derive(Debug, Clone, Copy)]
+pub struct Palette {
+    pub bg: u32,
+    pub text: u32,
+    /// Unavailable items.
+    pub dim: u32,
+    /// Secondary text: values, help, link underlines.
+    pub soft: u32,
+    pub sel_bg: u32,
+    pub sel_text: u32,
+    /// Secondary text on the selection.
+    pub sel_soft: u32,
+    /// Title/hint/toast backgrounds.
+    pub chrome: u32,
+    pub chrome_text: u32,
+    /// Raised surfaces (keys, input field, progress).
+    pub surface: u32,
+    pub button_bg: u32,
+    pub button_text: u32,
+    pub accent: u32,
+}
+
+pub const MINUI_PALETTE: Palette = Palette {
+    bg: BLACK,
+    text: WHITE,
+    dim: DARK_TEXT,
+    soft: LIGHT_TEXT,
+    sel_bg: WHITE,
+    sel_text: BLACK,
+    sel_soft: DARK_TEXT,
+    chrome: DARK_GRAY,
+    chrome_text: WHITE,
+    surface: DARK_GRAY,
+    button_bg: WHITE,
+    button_text: GRAY,
+    accent: GRAY,
+};
+
+/// MustardOS gets mustard.
+pub const MUOS_PALETTE: Palette = Palette {
+    bg: 0x161616,
+    text: 0xE8E8E8,
+    dim: 0x5A5A5A,
+    soft: 0xA6A6A6,
+    sel_bg: 0xF2B705,
+    sel_text: 0x161616,
+    sel_soft: 0x5C4500,
+    chrome: 0x000000,
+    chrome_text: 0xFFFFFF,
+    surface: 0x2B2B2B,
+    button_bg: 0xF2B705,
+    button_text: 0x161616,
+    accent: 0xF2B705,
+};
+
 /// Everything a screen draws with.
 pub struct Ui {
     pub font: Font,
+    pub style: Style,
+    pub pal: Palette,
+    /// muOS: the footer bar is drawn once per frame (reset by `clear`), so a
+    /// second hint group doesn't paint over the first.
+    footer_drawn: Cell<bool>,
 }
 
 impl Ui {
+    /// The UI font and the style from the environment.
     pub fn new() -> Self {
-        Self { font: Font::load() }
+        Self::with_style(Font::load(), Style::from_env())
     }
 
     pub fn with_font(font: Font) -> Self {
-        Self { font }
+        Self::with_style(font, Style::MinUI)
+    }
+
+    pub fn with_style(font: Font, style: Style) -> Self {
+        let pal = match style {
+            Style::MinUI => MINUI_PALETTE,
+            Style::Muos => MUOS_PALETTE,
+        };
+        Self { font, style, pal, footer_drawn: Cell::new(false) }
     }
 
     pub fn clear(&self, c: &mut Canvas) {
-        c.fill(BLACK);
+        c.fill(self.pal.bg);
+        self.footer_drawn.set(false);
     }
 
     /// The round (one letter) or pill-shaped (word) button glyph; returns its width.
     pub fn button(&self, c: &mut Canvas, x: i32, y: i32, label: &str) -> i32 {
+        let (bg, fg) = (self.pal.button_bg, self.pal.button_text);
         if label.chars().count() == 1 {
-            rounded_rect(c, x, y, BUTTON, BUTTON, BUTTON / 2, WHITE);
+            rounded_rect(c, x, y, BUTTON, BUTTON, BUTTON / 2, bg);
             let tw = self.font.measure(label, FONT_MEDIUM);
-            self.font.draw_centered_v(c, x + (BUTTON - tw) / 2, (y, BUTTON), label, FONT_MEDIUM, GRAY);
+            self.font.draw_centered_v(c, x + (BUTTON - tw) / 2, (y, BUTTON), label, FONT_MEDIUM, fg);
             BUTTON
         } else {
             let tw = self.font.measure(label, FONT_TINY);
             let w = BUTTON / 2 + tw;
-            pill(c, x, y, w, BUTTON, WHITE);
-            self.font.draw_centered_v(c, x + BUTTON / 4, (y, BUTTON), label, FONT_TINY, GRAY);
+            pill(c, x, y, w, BUTTON, bg);
+            self.font.draw_centered_v(c, x + BUTTON / 4, (y, BUTTON), label, FONT_TINY, fg);
             w.max(BUTTON)
         }
     }
@@ -303,31 +400,52 @@ impl Ui {
         b + BUTTON_MARGIN + self.font.measure(hint, FONT_SMALL) + BUTTON_MARGIN
     }
 
-    /// MinUI's button hint group: up to a few (button, hint) pairs in a dark
-    /// pill along the bottom edge, left or right aligned.
+    /// Button hints along the bottom, left or right aligned: MinUI puts each
+    /// group in a dark pill; muOS uses one full-width footer bar.
     pub fn hints(&self, c: &mut Canvas, pairs: &[(&str, &str)], align_right: bool) {
         if pairs.is_empty() {
             return;
         }
         let w = pairs.iter().map(|(b, h)| BUTTON_MARGIN + self.hint_width(b, h)).sum::<i32>() + BUTTON_MARGIN;
         let x0 = if align_right { W as i32 - PADDING - w } else { PADDING };
-        pill(c, x0, HINTS_TOP, w, PILL, DARK_GRAY);
+        match self.style {
+            Style::MinUI => pill(c, x0, HINTS_TOP, w, PILL, self.pal.chrome),
+            Style::Muos => {
+                if !self.footer_drawn.replace(true) {
+                    let top = HINTS_TOP + PADDING / 2;
+                    c.rect(0, top, W as i32, H as i32 - top, self.pal.chrome);
+                    c.rect(0, top, W as i32, 2, self.pal.surface);
+                }
+            }
+        }
         let mut x = x0 + BUTTON_MARGIN * 2;
-        let by = HINTS_TOP + (PILL - BUTTON) / 2;
+        let by = HINTS_TOP + (PILL - BUTTON) / 2 + if self.style == Style::Muos { PADDING / 4 } else { 0 };
         for (b, h) in pairs {
             let bw = self.button(c, x, by, b);
             x += bw + BUTTON_MARGIN;
-            x += self.font.draw_centered_v(c, x, (by, BUTTON), h, FONT_SMALL, WHITE) + BUTTON_MARGIN * 2;
+            x += self.font.draw_centered_v(c, x, (by, BUTTON), h, FONT_SMALL, self.pal.chrome_text) + BUTTON_MARGIN * 2;
         }
     }
 
-    /// The top-left title pill (dark gray, small white text).
+    /// The screen title: a dark pill (MinUI) or a header bar with an accent
+    /// underline (muOS).
     pub fn title(&self, c: &mut Canvas, text: &str) {
         let max = W as i32 - 2 * PADDING - 2 * BUTTON_PADDING;
-        let t = self.font.truncate(text, FONT_SMALL, max);
-        let w = self.font.measure(&t, FONT_SMALL) + 2 * BUTTON_PADDING;
-        pill(c, PADDING, PADDING, w, PILL, DARK_GRAY);
-        self.font.draw_centered_v(c, PADDING + BUTTON_PADDING, (PADDING, PILL), &t, FONT_SMALL, WHITE);
+        match self.style {
+            Style::MinUI => {
+                let t = self.font.truncate(text, FONT_SMALL, max);
+                let w = self.font.measure(&t, FONT_SMALL) + 2 * BUTTON_PADDING;
+                pill(c, PADDING, PADDING, w, PILL, self.pal.chrome);
+                self.font.draw_centered_v(c, PADDING + BUTTON_PADDING, (PADDING, PILL), &t, FONT_SMALL, self.pal.chrome_text);
+            }
+            Style::Muos => {
+                let h = PADDING + PILL - PADDING / 2;
+                c.rect(0, 0, W as i32, h, self.pal.chrome);
+                c.rect(0, h - 3, W as i32, 3, self.pal.accent);
+                let t = self.font.truncate(text, FONT_MEDIUM, max);
+                self.font.draw_centered_v(c, PADDING + BUTTON_PADDING / 2, (0, h - 3), &t, FONT_MEDIUM, self.pal.chrome_text);
+            }
+        }
     }
 
     /// Top of content row `i` (rows are PILL high, below the title).
@@ -340,8 +458,8 @@ impl Ui {
         ((HINTS_TOP - CONTENT_TOP - reserve) / PILL).max(1) as usize
     }
 
-    /// A MinUI menu row: white text, or black on a white pill when selected.
-    /// `right` is an optional value drawn at the right edge.
+    /// A menu row: plain text, or highlighted when selected. `right` is an
+    /// optional value drawn at the right edge.
     pub fn row(&self, c: &mut Canvas, i: usize, text: &str, selected: bool, right: Option<&str>, dim: bool) {
         self.row_ex(c, i, text, (selected, dim), right, 0);
     }
@@ -353,49 +471,80 @@ impl Ui {
         let full = W as i32 - 2 * PADDING;
         let right_w = right.map_or(0, |r| self.font.measure(r, FONT_SMALL) + BUTTON_PADDING) + reserve;
         let label = self.font.truncate(text, FONT_LARGE, full - 2 * BUTTON_PADDING - right_w);
-        if selected {
-            // With a value: the pill spans the row, like MinUI's option lists.
-            let w = if right.is_some() || reserve > 0 { full } else { self.font.measure(&label, FONT_LARGE) + 2 * BUTTON_PADDING };
-            pill(c, PADDING, y, w, PILL, WHITE);
+        match self.style {
+            Style::MinUI => {
+                if selected {
+                    // With a value: the pill spans the row, like MinUI's option lists.
+                    let w = if right.is_some() || reserve > 0 { full } else { self.font.measure(&label, FONT_LARGE) + 2 * BUTTON_PADDING };
+                    pill(c, PADDING, y, w, PILL, self.pal.sel_bg);
+                }
+            }
+            Style::Muos => {
+                if selected {
+                    rounded_rect(c, PADDING / 2, y + 4, W as i32 - PADDING, PILL - 8, 10, self.pal.sel_bg);
+                } else {
+                    c.rect(PADDING + BUTTON_PADDING / 2, y + PILL - 1, full - BUTTON_PADDING, 1, self.pal.surface);
+                }
+            }
         }
         let color = match (selected, dim) {
-            (true, _) => BLACK,
-            (false, true) => DARK_TEXT,
-            (false, false) => WHITE,
+            (true, _) => self.pal.sel_text,
+            (false, true) => self.pal.dim,
+            (false, false) => self.pal.text,
         };
         self.font.draw_centered_v(c, PADDING + BUTTON_PADDING, (y, PILL), &label, FONT_LARGE, color);
         let reserve_x = PADDING + full - BUTTON_PADDING - reserve;
         if let Some(r) = right {
             let rw = self.font.measure(r, FONT_SMALL);
-            let rc = if selected { DARK_TEXT } else { LIGHT_TEXT };
+            let rc = if selected { self.pal.sel_soft } else { self.pal.soft };
             let gap = if reserve > 0 { BUTTON_MARGIN * 2 } else { 0 };
             self.font.draw_centered_v(c, reserve_x - gap - rw, (y, PILL), r, FONT_SMALL, rc);
         }
         reserve_x
     }
 
-    /// A progress pill above the hints: `frac` fills it from the left.
+    /// The box behind toasts and progress: a pill (MinUI) or a card with an
+    /// accent edge (muOS).
+    fn card(&self, c: &mut Canvas, x: i32, y: i32, w: i32) {
+        match self.style {
+            Style::MinUI => pill(c, x, y, w, PILL, self.pal.chrome),
+            Style::Muos => {
+                rounded_rect(c, x, y, w, PILL, 10, self.pal.surface);
+                rounded_rect(c, x, y, 8, PILL, 4, self.pal.accent);
+            }
+        }
+    }
+
+    /// A progress bar above the hints: `frac` fills it from the left.
     pub fn progress(&self, c: &mut Canvas, text: &str, frac: Option<f32>) {
         let w = W as i32 - 2 * PADDING;
         let y = HINTS_TOP - PILL - PADDING / 2;
-        pill(c, PADDING, y, w, PILL, DARK_GRAY);
+        self.card(c, PADDING, y, w);
         if let Some(f) = frac {
             let fill = ((w as f32) * f.clamp(0.0, 1.0)) as i32;
+            let fill_color = match self.style {
+                Style::MinUI => 0x4A4A4A,
+                Style::Muos => 0x5C4500,
+            };
             if fill > PILL / 2 {
-                pill(c, PADDING, y, fill, PILL, 0x4A4A4A);
+                match self.style {
+                    Style::MinUI => pill(c, PADDING, y, fill, PILL, fill_color),
+                    Style::Muos => rounded_rect(c, PADDING, y, fill, PILL, 10, fill_color),
+                }
             }
         }
         let t = self.font.truncate(text, FONT_SMALL, w - 2 * BUTTON_PADDING);
-        self.font.draw_centered_v(c, PADDING + BUTTON_PADDING, (y, PILL), &t, FONT_SMALL, WHITE);
+        self.font.draw_centered_v(c, PADDING + BUTTON_PADDING, (y, PILL), &t, FONT_SMALL, self.pal.chrome_text);
     }
 
     /// Small scroll arrows at the right edge when a list doesn't fit.
     pub fn scroll_marks(&self, c: &mut Canvas, first: usize, shown: usize, total: usize) {
         let x = W as i32 - PADDING / 2 - 6;
+        let color = self.pal.accent;
         let tri = |c: &mut Canvas, y: i32, up: bool| {
             for i in 0..6 {
                 let w = if up { i * 2 + 1 } else { 11 - i * 2 };
-                c.rect(x + 6 - w / 2, y + i, w, 1, GRAY);
+                c.rect(x + 6 - w / 2, y + i, w, 1, color);
             }
         };
         if first > 0 {
@@ -414,50 +563,63 @@ impl Ui {
         let mut y = (H as i32 - lh * lines.len() as i32) / 2;
         for l in &lines {
             let w = self.font.measure(l, FONT_LARGE);
-            self.font.draw(c, (W as i32 - w) / 2, y, l, FONT_LARGE, WHITE);
+            self.font.draw(c, (W as i32 - w) / 2, y, l, FONT_LARGE, self.pal.text);
             y += lh;
         }
     }
 
-    /// A toast: dark pill above the hints with a short message.
+    /// A short message above the hints.
     pub fn toast(&self, c: &mut Canvas, text: &str) {
         let max = W as i32 - 2 * PADDING - 2 * BUTTON_PADDING;
         let t = self.font.truncate(text, FONT_SMALL, max);
         let w = self.font.measure(&t, FONT_SMALL) + 2 * BUTTON_PADDING;
         let x = (W as i32 - w) / 2;
         let y = HINTS_TOP - PILL - PADDING / 2;
-        pill(c, x, y, w, PILL, DARK_GRAY);
-        self.font.draw_centered_v(c, x + BUTTON_PADDING, (y, PILL), &t, FONT_SMALL, WHITE);
+        self.card(c, x, y, w);
+        self.font.draw_centered_v(c, x + BUTTON_PADDING, (y, PILL), &t, FONT_SMALL, self.pal.chrome_text);
     }
-}
 
-impl Ui {
-    /// The on-screen keyboard, MinUI style: title pill, input pill with a
-    /// blinking caret, rounded keys (selected key white), hints at the bottom.
+    /// The on-screen keyboard: title, input field with a blinking caret,
+    /// rounded keys (the selected one highlighted), hints at the bottom.
     pub fn keyboard(&self, c: &mut Canvas, kb: &crate::keyboard::Keyboard, title: &str, ok_hint: &str, time: f32) {
         use crate::keyboard::{COLS, PAGE_NAMES, ROWS};
         self.clear(c);
         self.title(c, title);
         let (fx, fw) = (PADDING, W as i32 - 2 * PADDING);
         let fy = CONTENT_TOP;
-        pill(c, fx, fy, fw, PILL, DARK_GRAY);
+        match self.style {
+            Style::MinUI => pill(c, fx, fy, fw, PILL, self.pal.surface),
+            Style::Muos => {
+                rounded_rect(c, fx, fy, fw, PILL, 10, self.pal.surface);
+                c.rect(fx + 10, fy + PILL - 3, fw - 20, 3, self.pal.accent);
+            }
+        }
         let shown = self.font.truncate_start(&kb.text, FONT_LARGE, fw - 2 * BUTTON_PADDING - 8);
-        let end = fx + BUTTON_PADDING + self.font.draw_centered_v(c, fx + BUTTON_PADDING, (fy, PILL), &shown, FONT_LARGE, WHITE);
+        let end = fx + BUTTON_PADDING + self.font.draw_centered_v(c, fx + BUTTON_PADDING, (fy, PILL), &shown, FONT_LARGE, self.pal.text);
         if (time * 2.0) as i32 % 2 == 0 {
-            c.rect(end + 3, fy + 14, 3, PILL - 28, WHITE);
+            let caret = match self.style {
+                Style::MinUI => self.pal.text,
+                Style::Muos => self.pal.accent,
+            };
+            c.rect(end + 3, fy + 14, 3, PILL - 28, caret);
         }
         let (kw, kh, gap) = (54, 50, 6);
         let x0 = (W as i32 - (COLS as i32 * (kw + gap) - gap)) / 2;
         let y0 = fy + PILL + PADDING;
+        let radius = match self.style {
+            Style::MinUI => 12,
+            Style::Muos => 8,
+        };
         for row in 0..ROWS {
             for col in 0..COLS {
                 let x = x0 + col as i32 * (kw + gap);
                 let y = y0 + row as i32 * (kh + gap);
                 let selected = row == kb.row && col == kb.col;
-                rounded_rect(c, x, y, kw, kh, 12, if selected { WHITE } else { DARK_GRAY });
+                rounded_rect(c, x, y, kw, kh, radius, if selected { self.pal.sel_bg } else { self.pal.surface });
                 let label = kb.key_at(row, col).to_string();
                 let tw = self.font.measure(&label, FONT_MEDIUM);
-                self.font.draw_centered_v(c, x + (kw - tw) / 2, (y, kh), &label, FONT_MEDIUM, if selected { BLACK } else { WHITE });
+                let fg = if selected { self.pal.sel_text } else { self.pal.text };
+                self.font.draw_centered_v(c, x + (kw - tw) / 2, (y, kh), &label, FONT_MEDIUM, fg);
             }
         }
         let next = PAGE_NAMES[(kb.page + 1) % PAGE_NAMES.len()];

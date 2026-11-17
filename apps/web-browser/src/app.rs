@@ -489,14 +489,14 @@ impl App {
                 let w = font.measure(&seg.text, size);
                 let color = match seg.link {
                     Some(i) if Some(i) == e.selected => {
-                        ui::rounded_rect(c, x - 6, y - 3, w + 12, th + 6, 8, ui::WHITE);
-                        ui::BLACK
+                        ui::rounded_rect(c, x - 6, y - 3, w + 12, th + 6, 8, self.ui.pal.sel_bg);
+                        self.ui.pal.sel_text
                     }
                     Some(_) => {
-                        c.rect(x, y + th - 2, w, 2, ui::LIGHT_GRAY);
-                        ui::WHITE
+                        c.rect(x, y + th - 2, w, 2, self.ui.pal.accent);
+                        self.ui.pal.text
                     }
-                    None => ui::LIGHT_TEXT,
+                    None => self.ui.pal.soft,
                 };
                 font.draw(c, x, y, &seg.text, size, color);
                 x += w;
@@ -507,8 +507,8 @@ impl App {
             let x = W as i32 - ui::PADDING / 2 - 6;
             let thumb = (bh * rows as i32 / total as i32).max(24);
             let ty = by + (bh - thumb) * e.scroll as i32 / self.max_scroll().max(1) as i32;
-            ui::rounded_rect(c, x, by, 6, bh, 3, ui::DARK_GRAY);
-            ui::rounded_rect(c, x, ty, 6, thumb, 3, ui::GRAY);
+            ui::rounded_rect(c, x, by, 6, bh, 3, self.ui.pal.surface);
+            ui::rounded_rect(c, x, ty, 6, thumb, 3, self.ui.pal.accent);
         }
         self.ui.hints(c, &[("B", "BACK"), ("X", "URL")], false);
         if e.selected.is_some() {

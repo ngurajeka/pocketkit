@@ -13,6 +13,8 @@ cd "$APP_DIR" || exit 1
 export POCKETKIT_DATA="${XDG_CONFIG_HOME:-$HOME/.config}/pocketkit"
 mkdir -p "$POCKETKIT_DATA/music"
 export POCKETKIT_FONT="$APP_DIR/font.ttf"
+# Draw in the muOS style (header/footer bars, mustard highlight).
+export POCKETKIT_STYLE=muos
 # muOS's own music folder.
 export MUSIC_DIR="/run/muos/storage/music"
 export MUSIC_STATE="$POCKETKIT_DATA/music/state.txt"
