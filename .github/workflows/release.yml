@@ -1,0 +1,32 @@
+name: Release
+
+# Push a tag like v0.1.0 to build every app and attach the packages to a
+# GitHub Release: MinUI paks as <Name>.pak.zip, muOS apps as <Name>.muxapp.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - uses: Swatinem/rust-cache@v2
+      - name: Build every app for every platform
+        run: nix develop --command ./package.sh
+      - name: Collect release files
+        run: |
+          mkdir -p release
+          cd dist/minui
+          for pak in *.pak; do zip -qr -X "../../release/$pak.zip" "$pak"; done
+          cd ../..
+          cp dist/muos/*.muxapp release/
+          cd release && sha256sum -- * > SHA256SUMS && ls -l
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
