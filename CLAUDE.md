@@ -4,59 +4,65 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository
 
-MinUI paks for the Miyoo Mini / Mini+, all in Rust. A pak on the device is a folder `<Name>.pak/` containing a `launch.sh` that MinUI runs; it goes in `Tools/miyoomini/` on the SD card. Each project's `package.sh` assembles it under `<project>/dist/`.
+**pocketkit**: Rust apps for retro handhelds, one Cargo workspace (single `Cargo.lock`, `target/` and release profile at the root). Platforms:
 
-- `pocket-pet/` → `Pocket Pet.pak`: virtual pet game. Standalone (own 320x240 renderer, 2x-scaled device backend).
-- `web-browser/` → `Web Browser.pak`: text-mode browser + downloader (HTTPS via rustls/ring).
-- `wifi/` → `Wifi.pak`: Wi-Fi network picker (replaced an earlier shell-script Wifi.pak, see git history).
-- `music/` → `Music.pak`: music player styled like a classic late-90s desktop player (original art drawn in `skin.rs`). The only pak built for **glibc** (`armv7-unknown-linux-gnueabihf`), because audio goes through the vendor `MI_AO` library (`src/ao_shim.c`); needs the Miyoo Mini toolchain (see Environment).
-- `settings/` → `Settings.pak`: screen-off time for our paks, MinUI brightness/RTC/560p, Wi-Fi/ADB at startup (managed block in `$USERDATA_PATH/auto.sh`, MinUI's boot hook, backed up once to `auto.sh.before-settings-pak`), music folder, browser search engine.
-- `common/` (crate `minui_common`): shared by web-browser, wifi, music and settings: 640x480 `Canvas` + 8x8 font (`font8x8`), `Button`, on-screen `Keyboard`, `Platform` backends (incl. backlight), `minui` (MinUI's shared settings: volume, brightness), `settings` (our `key=value` file `$USERDATA_PATH/minui-paks.txt`), `ui` (MinUI's look: its BPreplay font via `fontdue`, pills, rows, button hints, toasts, keyboard; sizes/colours from MinUI's `defines.h`/`api.c` at 2x), and `run()` (the 30 fps loop; MENU quits; screen off after the `screen_off` setting or with POWER, first press only wakes) driving anything that implements `minui_common::App`.
+- **MinUI** on the Miyoo Mini / Mini+ (ARMv7): an app ships as a pak folder `<Name>.pak/` with a `launch.sh`, installed in `Tools/miyoomini/` on the SD card.
+- **muOS** on the Anbernic RG35XX-SP (Allwinner H700, aarch64): an app is a folder in `/run/muos/storage/application/<Name>/` with `mux_launch.sh` (sources `/opt/muos/script/var/func.sh`, calls `SETUP_APP "<binary>" ""`; `# HELP/# ICON/# GRID` header lines are read by the frontend) and `mux_launch.ini`; distributed as `<Name>.muxapp`, a zip whose top level is the app folder (muOS's `script/mux/extract.sh` unzips `.muxapp` into its application dir).
 
-UI look: settings, wifi and web-browser draw everything through `minui_common::ui` (MinUI style: black, white pill on the selection, round button hints). The font is never bundled: on the device it's MinUI's own `$SDCARD_PATH/.system/res/BPreplayBold-unhinted.otf`; for desktop previews/tests run `tools/fetch-minui-res.sh` once (downloads it to the git-ignored `.minui-res/`). Without it everything falls back to the 8x8 bitmap font. Music keeps its own retro skin. B quits from a pak's top screen (`App::quit`), MENU always quits; unmapped keys (VOL+/-) arrive as `Button::Other` so they still count as activity.
-
-Every project is its own crate with its own `Cargo.lock`/`target` (no workspace).
+Layout:
+- `crates/core` (`pocketkit_core`): device-independent: 640x480 `Canvas` + 8x8 fallback font, `Button` (incl. `Power`, and `Other` for unmapped keys so they count as activity), on-screen `Keyboard`, `ui` (MinUI's look: font via `fontdue`, pills, rows, round button hints, toasts, keyboard; sizes/colours from MinUI's `defines.h`/`api.c` at 2x), `settings` (shared `key=value` file), the `Platform` trait, and `run_with()` (30 fps loop; MENU quits, `App::quit` lets B quit; screen off after the `screen_off` setting or with POWER, first press only wakes).
+- `crates/platform` (`pocketkit_platform`): Cargo features `desktop` (minifb window), `minui`, `muos`; `open()`/`run(title, app)` pick by feature. `fb.rs` (framebuffer writer, optional 180° flip, writes to the panned visible page), `evdev.rs` (key tables per device, ABS_HAT0 D-pad, software key repeat), `minui.rs`/`muos.rs` (device wiring), `minui_settings.rs` (MinUI's shared volume/brightness), `volume.rs` (system volume: MinUI file or PipeWire `wpctl`).
+- `apps/*`, each with `pak/minui/` and, where ported, `pak/muos/` packaging files:
+  - `web-browser` (MinUI, muOS): text-mode browser + downloader (HTTPS via rustls/ring).
+  - `music` (MinUI, muOS): retro desktop-player skin (original art in `skin.rs`). On MinUI it's the only **glibc** build (`armv7-unknown-linux-gnueabihf`, Miyoo toolchain) because audio must go through the firmware audioserver (`src/ao_shim.c`); elsewhere `PipeSink` pipes PCM to `pw-play --raw`/`paplay`/`aplay`, skipping players that exit immediately.
+  - `wifi`, `settings` (MinUI only; muOS has its own network/settings menus). Settings manages a marked block in MinUI's boot hook `$USERDATA_PATH/auto.sh` (markers `# >>> minui-paks` / `# <<< minui-paks`, kept for existing installs; backed up once to `auto.sh.before-settings-pak`).
+  - `pocket-pet` (MinUI only): still on its own 320x240 renderer and Miyoo backend (`--features device`), not yet on core/platform.
+- `packaging/muos/font/`: Atkinson Hyperlegible Bold + `OFL.txt`, copied into every muOS app as `font.ttf` (muOS has no MinUI font). On MinUI the UI font is MinUI's own `$SDCARD_PATH/.system/res/BPreplayBold-unhinted.otf`, never bundled; desktop previews/tests need `tools/fetch-minui-res.sh` once (downloads it to git-ignored `.minui-res/`), else everything falls back to the bitmap font.
 
 ## Environment
 
-The root `flake.nix` + `.envrc` (`use flake`, via direnv) provide the toolchain: stable Rust with the `armv7-unknown-linux-musleabihf` target, and the X11/Wayland libs that `minifb` dlopens for the desktop preview (via `LD_LIBRARY_PATH`).
+`flake.nix` + `.envrc` (direnv) provide: stable Rust with `armv7-unknown-linux-musleabihf`, `armv7-unknown-linux-gnueabihf` and `aarch64-unknown-linux-musl`; X11/Wayland libs for the minifb preview; `adb`, `sshpass`, `zip`.
 
-Cross-compiling uses plain `cargo` + `rust-lld` against Rust's bundled self-contained musl; the dev shell sets `BUILD_CMD="cargo build"` and the linker, which `package.sh` picks up instead of its `cross` default. For crates with small libc-free C parts (ring, used by rustls), the shell also sets `CC/CFLAGS/AR_armv7_unknown_linux_musleabihf` to unwrapped clang + llvm-ar. There are no musl headers, so C code that includes libc headers (SDL etc.) won't build without adding a real musl cross toolchain. (`cargo-zigbuild` from nixpkgs fails for this target: it writes into zig's read-only store path.)
-
-The music pak needs the Miyoo Mini toolchain MinUI builds with (Linaro GCC 8.3 + glibc 2.28 sysroot containing `libmi_ao`/`libmi_sys`/`libmi_common` and `mi_ao.h`): <https://github.com/shauninman/miyoomini-toolchain-buildroot/releases/tag/v0.0.3> (sha256 `e158b6eb...4f2e`). The flake fetches it as `miyooToolchain` (x86_64-linux only; host tools autoPatchelf'd, the bundled gdb's missing deps ignored, broken-symlink check off because the sysroot mirrors a device filesystem) and sets `MIYOO_TOOLCHAIN`, `CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER`, `CC_/AR_armv7_unknown_linux_gnueabihf`; the Rust toolchain includes the `armv7-unknown-linux-gnueabihf` target. `music/build.rs` links `libmi_ao/mi_sys/mi_common` statically from the sysroot, so the binary only needs the device's glibc (≤ 2.28). Run glibc ARM builds under qemu with `qemu-arm -L $MIYOO_TOOLCHAIN/arm-linux-gnueabihf/libc <bin>`. The root `package.sh` keeps going when one pak fails and lists failures at the end.
-
-ARM builds can be smoke-tested with `qemu-arm` (`nix build nixpkgs#qemu-user`), e.g. web-browser's `fetch` example built for the target.
+- Static musl builds link with `rust-lld` against Rust's self-contained musl; ring's libc-free C is compiled with unwrapped clang (`CC/CFLAGS/AR_<target>` for both musl targets). No musl headers, so C that includes libc headers won't build. (`cargo-zigbuild` from nixpkgs fails: it writes into zig's read-only store path.)
+- MinUI Music needs the Miyoo Mini toolchain MinUI builds with (Linaro GCC 8.3, glibc 2.28 sysroot with `libmi_*`): fetched by the flake as `miyooToolchain` (x86_64-linux only; host tools autoPatchelf'd, bundled gdb's missing deps ignored, broken-symlink check off because the sysroot mirrors a device filesystem); sets `MIYOO_TOOLCHAIN` and the gnueabihf linker/CC/AR. `apps/music/build.rs` compiles `ao_shim.c` only with feature `minui`.
+- Smoke-test ARM builds with `qemu-arm`/`qemu-aarch64` (`nix build nixpkgs#qemu-user`); glibc builds need `-L $MIYOO_TOOLCHAIN/arm-linux-gnueabihf/libc`.
 
 ## Commands
 
-From the repo root, `./package.sh` builds every project that has a `package.sh` (or `./package.sh wifi web-browser` for some) and collects the paks in the root `dist/`, ready to copy to `Tools/miyoomini/`.
-
-`./deploy.sh [project...]` builds and copies paks to the Mini over Wi-Fi with adb (from the dev shell): on the Mini, connect with Wifi then open MinUI's ADBD.pak (adbd on port 5555, no auth). The Mini's IP is set once with `--ip` and kept in the untracked `.miyoo-ip`; `--no-build` skips building. It always replaces binaries and `launch.sh` but never overwrites `*.txt` already on the Mini (user-edited config). adb's background server inherits stdout, so redirect it (`adb start-server >/dev/null 2>&1`) or piped commands hang. With adbd running you can also read device logs, e.g. `adb shell cat /mnt/SDCARD/.userdata/miyoomini/music/log.txt`.
-
-Inside the dev shell, from a project directory:
+From the repo root, in the dev shell:
 
 ```sh
-./package.sh                     # device build -> dist/<Name>.pak
-cargo run --release              # desktop preview window
-cargo test                       # cargo test <name> for a single test
-cargo clippy --all-targets
-cargo run --example snapshot     # snapshots/*.ppm of the screens (pocket-pet, web-browser, wifi)
+./package.sh [minui|muos] [app...]   # -> dist/minui/<Name>.pak, dist/muos/<Name>/ + <Name>.muxapp
+./deploy.sh [app...]                 # build + copy to the Mini (adb); --no-build, --ip <ip>
+./deploy.sh --muos [app...]          # build + copy to muOS (ssh/scp as root)
+cargo test --workspace               # cargo test -p <crate> [name] for one
+cargo clippy --workspace --all-targets
+cargo run --release -p web_browser   # desktop preview (default feature `desktop`)
+cargo run -p music --example music_snapshot   # snapshots/*.ppm (also browser_, wifi_, settings_, pet_snapshot)
 ```
 
+`package.sh` holds the app table (dir | display name | binary | platforms) and the target/feature per platform; it keeps going when one build fails (MinUI Music without `MIYOO_TOOLCHAIN` is skipped) and lists failures at the end. `deploy.sh` reads the same table, always replaces binaries/launchers and never overwrites a `*.txt` already on the device. Device IPs live in git-ignored `.miyoo-ip` / `.muos-ip`.
+
+- MinUI deploy: on the Mini, Wifi then ADBD.pak (adbd on 5555, no auth; or Settings → ADB at startup). adb's background server inherits stdout, so start it with `adb start-server >/dev/null 2>&1` or piped commands hang. Logs: `adb shell cat /mnt/SDCARD/.userdata/miyoomini/<app>/log.txt`.
+- muOS deploy: enable SSH in muOS; root's default password is `root`. With `SSHPASS=root`, deploy.sh uses sshpass and forces `PreferredAuthentications=password` (sshpass can't answer keyboard-interactive and hangs). Logs: `/root/.config/pocketkit/<app>/log.txt`. Give ssh `</dev/null` in scripts or it can hang.
+
 Project-specific:
-- pocket-pet: `PET_SPEED=60 cargo run` (needs tick faster); saves to `pet_save.txt` (`PET_SAVE_PATH`).
-- web-browser: `cargo run --example fetch -- <url|search>` prints a page as laid out on screen; `--save <url>` downloads into `./downloads`. Env: `BROWSER_BOOKMARKS` (default `pak/bookmarks.txt`), `BROWSER_DOWNLOAD_DIR` (default `./downloads`), `BROWSER_SEARCH_URL` (default Brave Search; DuckDuckGo is unreachable from this dev machine, Mojeek/Startpage serve JS captchas).
-- music: `MUSIC_DIR=~/Music cargo run --release` (desktop audio is piped to `pw-play --raw`/`paplay`/`aplay`); tests generate WAV tones (`decoder::write_test_wav`) and play them through `audio::NullSink`. Env: `MUSIC_DIR`, `MUSIC_STATE`.
-- wifi: the desktop build uses a simulated backend (`backend::Fake`, correct password `password123`); `tests/flow.rs` drives the whole app through it.
+- web-browser: `cargo run -p web_browser --example fetch -- <url|search>` prints a page as laid out (char grid via `html::layout_cols`; the app wraps by pixel width with the real font via `html::layout`). Env: `BROWSER_BOOKMARKS`, `BROWSER_DOWNLOAD_DIR`, `BROWSER_SEARCH_URL` (default Brave; DuckDuckGo is unreachable from this dev machine, Mojeek/Startpage serve JS captchas).
+- music: `MUSIC_DIR=~/Music cargo run --release -p music`; tests generate WAV tones (`decoder::write_test_wav`) and play them through `audio::NullSink`. Env: `MUSIC_DIR`, `MUSIC_STATE`, `MINUI_SETTINGS`.
+- wifi: the desktop build uses `backend::Fake` (correct password `password123`); `tests/flow.rs` drives the whole app through it. `wifi --up` brings Wi-Fi up headless (used by the auto.sh block).
+- pocket-pet: `PET_SPEED=60 cargo run -p pocket_pet`.
 
-Desktop keys (common): arrows = D-pad, Z/Space = A, X = B, C = X, V = Y, Q/W = L1/R1, E/R = L2/R2, P = Power, Enter = Start, Tab = Select, Esc = Menu. Device key codes: L2 = 15, R2 = 14, Power = 116 (MinUI's miyoomini layout).
+Desktop keys: arrows = D-pad, Z/Space = A, X = B, C = X, V = Y, Q/W = L1/R1, E/R = L2/R2, P = Power, Enter = Start, Tab = Select, Esc = Menu.
 
-## Architecture
+## Device facts (verified on hardware)
 
-- Cargo features select the backend: `desktop` (default, minifb window) vs `device` (`package.sh` builds `--no-default-features --features device`). The `Platform` trait (`poll()` buttons in, `present()` a canvas out) is the only screen/input boundary; logic is pure and unit-tested on the host.
-- Device backends write straight to `/dev/fb0` and read evdev `/dev/input/event0` (common's is native 640x480 with software key repeat for D-pad/L1/R1/B and a 180-degree flip, `FB_ROTATE=0` disables it). Both backends rotate every frame 180 degrees because the Mini's panel is mounted upside down (confirmed on hardware). The paks run on a Miyoo Mini+; `input_event` is 16 bytes on 32-bit ARM vs 24 on 64-bit hosts.
-- web-browser: `html.rs` turns HTML into `Doc` (text + link nodes) and word-wraps it (`layout`), `net.rs` fetches on a background thread (ureq 2 + rustls; non-page content types are streamed to a `.part` file then renamed; a custom cert verifier uses the build time as "now" when the device clock is behind it), `app.rs` holds screens/history/link navigation.
-- wifi: `worker.rs` runs a `Backend` on a thread (Cmd/Ev channels). `device.rs` brings Wi-Fi up like MinUI's ADBD.pak (`8188fu.ko`, `/customer/app/axp_test wifion`, `wpa_supplicant -B -D nl80211`, `udhcpc`) and does everything else via wpa_supplicant's control socket (`wpa.rs`, `/var/run/wpa_supplicant/wlan0`), so `wpa_cli`/`iw` aren't required. Networks persist in `/appconfigs/wpa_supplicant.conf` (`WIFI_CONF`); a new network is removed again if it fails to connect.
-- MinUI facts that shaped things: its auto-sleep (30 s) and sleep→power-off (2 min) are compile-time constants (`SLEEP_DELAY` in `workspace/all/common/api.c`), not settings; its options are flag files in `$USERDATA_PATH` (`enable-rtc`, `enable-560p`; `enable-simple-mode` in the shared userdata hides Tools, so we don't offer it); it runs `$USERDATA_PATH/auto.sh` at boot with `SDCARD_PATH`/`PLATFORM` exported. On the Mini+ it also runs the firmware `audioserver` and exports `LD_PRELOAD=/customer/lib/libpadsp.so`, so audio must go through `/dev/dsp` (see `music/src/ao_shim.c` for that library's crash workarounds). `wifi --up` brings Wi-Fi up headless (used by the auto.sh block).
-- Each pak's `launch.sh` redirects stdout/stderr to a `log.txt` (pocket-pet/web-browser under `$USERDATA_PATH/<name>/`, wifi in the pak folder); check it first when something fails on device.
-- Release profiles are size-optimized (`opt-level="s"`, LTO, `panic="abort"`, strip).
+- **Miyoo Mini+ / MinUI**: `/dev/fb0` 640x480 32bpp; panel mounted upside down, so frames are flipped 180° (`FB_ROTATE=0` disables). Keys on `event0` as keyboard codes (A=57, B=29, X=42, Y=56, L1=18, R1=20, L2=15, R2=14, Start=28, Select=97, Menu=1, Power=116). Backlight via MinUI's GPIO4/PWM sequence. MinUI's auto-sleep (30 s) and sleep→power-off (2 min) are compile-time constants (`SLEEP_DELAY` in its `api.c`), not settings. Options are flag files in `$USERDATA_PATH` (`enable-rtc`, `enable-560p`; `enable-simple-mode` hides Tools, so it isn't offered). MinUI runs `$USERDATA_PATH/auto.sh` at boot with `SDCARD_PATH`/`PLATFORM` exported. Shared volume/brightness are in `/tmp/SharedSettings` (no /dev/shm on the Mini). On the Mini+ the firmware `audioserver` owns the audio hardware and MinUI exports `LD_PRELOAD=/customer/lib/libpadsp.so`: audio must go through `/dev/dsp`, opened after a warm-up `open()` (libpadsp jumps to NULL if /dev/dsp is the first file opened; `SNDCTL_DSP_RESET` also crashes it) — see `ao_shim.c`.
+- **RG35XX-SP / muOS**: `/dev/fb0` 640x480 32bpp, 640x960 virtual, not rotated; no `/sys/class/backlight` (screen off via `/sys/class/graphics/fb0/blank`). Gamepad `muOS-Keys` (event1): A=304, B=305, X=307, Y=306, L1=308, R1=309, L2=314, R2=315, Select=310, Start=311, Menu=312, D-pad = ABS_HAT0X/Y, VOL±=115/114; power `axp2202-pek` (event0, 116). muOS grabs the gamepad while its menu is up and releases it for launched apps. Audio: PipeWire; its old `pw-play` has no `--raw`, but ALSA's default PCM goes through PipeWire (`/etc/asound.conf`), so `aplay` follows the system volume; `wpctl` needs `XDG_RUNTIME_DIR=/run` (set for launched apps). Storage: apps `/run/muos/storage/application`, music `/run/muos/storage/music`.
+
+## Architecture notes
+
+- The `Platform` trait (`poll` buttons, `present` canvas, `set_backlight`) is the only device boundary; app logic is pure and unit-tested on the host. `input_event` is 16 bytes on 32-bit ARM, 24 on 64-bit (handled in `evdev.rs`).
+- Shared settings file: `PAKS_SETTINGS`, else `$POCKETKIT_DATA/pocketkit.txt` (muOS launchers set `POCKETKIT_DATA=~/.config/pocketkit`), else `$USERDATA_PATH/minui-paks.txt` (MinUI; old name kept), else `./pocketkit.txt`. Keys: `screen_off`, `music_dir`, `search_url`.
+- web-browser: `html.rs` turns HTML into `Doc` (text + link nodes) and wraps it; `net.rs` fetches on a background thread (ureq 2 + rustls; non-page content types are streamed to a `.part` file then renamed; a custom cert verifier uses the build time as "now" when the device clock is behind it).
+- wifi: `worker.rs` runs a `Backend` on a thread; `device.rs` brings Wi-Fi up like MinUI's ADBD.pak and drives wpa_supplicant through its control socket (`wpa.rs`), so `wpa_cli`/`iw` aren't required. Networks persist in `/appconfigs/wpa_supplicant.conf`; a new network is removed again if it fails to connect.
+- Every launcher redirects stdout/stderr to a `log.txt`; check it first when something fails on a device.
