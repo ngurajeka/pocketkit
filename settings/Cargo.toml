@@ -1,0 +1,20 @@
+[package]
+name = "settings"
+version = "0.1.0"
+edition = "2021"
+description = "Settings for MinUI on the Miyoo Mini+ and for our paks"
+
+[dependencies]
+minui_common = { path = "../common" }
+
+[features]
+default = ["desktop"]
+desktop = ["minui_common/desktop"]
+device = []
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
