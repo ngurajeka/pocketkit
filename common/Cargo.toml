@@ -1,0 +1,14 @@
+[package]
+name = "minui_common"
+version = "0.1.0"
+edition = "2021"
+description = "Shared screen, input and on-screen keyboard code for the Rust MinUI paks"
+
+[dependencies]
+font8x8 = "0.3"
+# Only used for the desktop preview window.
+minifb = { version = "0.27", optional = true }
+
+[features]
+default = []
+desktop = ["dep:minifb"]
