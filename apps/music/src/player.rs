@@ -186,7 +186,11 @@ impl Engine {
                 }
             }
             Cmd::Resume => self.playing = self.decoder.is_some(),
-            Cmd::Pause => self.playing = false,
+            Cmd::Pause => {
+                // Drop what the output has queued, so it goes quiet right away.
+                self.playing = false;
+                self.sink.flush();
+            }
             Cmd::Stop => self.stop(),
             Cmd::Seek(secs) => {
                 if let Some(d) = &mut self.decoder {

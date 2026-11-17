@@ -85,31 +85,61 @@ impl Sink for NullSink {
 /// PulseAudio's paplay or ALSA's aplay. Used for the desktop preview and on
 /// muOS (whose older pw-play has no `--raw`, but whose ALSA default device
 /// goes through PipeWire, so aplay follows the system volume).
+///
+/// A player that exits or stops accepting audio is dropped for good and the
+/// next one is tried; while none works, playback is held to real time (silent)
+/// instead of racing through the track.
 pub struct PipeSink {
-    child: Option<(Child, ChildStdin)>,
-    failed: bool,
-    /// The player that worked, so restarts (after stop/seek) don't probe again.
+    child: Option<(Child, ChildStdin, usize)>,
+    /// (program, arguments), in the order to try them.
+    players: Vec<(String, Vec<String>)>,
+    /// Players that failed; never tried again.
+    bad: Vec<bool>,
+    /// The player that worked, so restarts (after stop/seek) go straight to it.
     chosen: Option<usize>,
+    gave_up: bool,
+    pacer: Pacer,
 }
 
-const PLAYERS: &[(&str, &[&str])] = &[
-    ("pw-play", &["--raw", "--rate", "48000", "--channels", "2", "--format", "s16", "-"]),
-    ("paplay", &["--raw", "--rate=48000", "--channels=2", "--format=s16le"]),
-    ("aplay", &["-q", "-t", "raw", "-f", "S16_LE", "-r", "48000", "-c", "2", "-"]),
+pub const PLAYERS: &[(&str, &[&str])] = &[
+    // Small buffers, so pause/seek/stop take effect quickly (aplay's default is ~0.5 s).
+    ("pw-play", &["--raw", "--rate", "48000", "--channels", "2", "--format", "s16", "--latency", "60ms", "-"]),
+    ("paplay", &["--raw", "--rate=48000", "--channels=2", "--format=s16le", "--latency-msec=60"]),
+    ("aplay", &["-q", "-t", "raw", "-f", "S16_LE", "-r", "48000", "-c", "2", "-B", "80000", "-"]),
 ];
+
+/// How long a freshly started player gets to reject our options. Generous,
+/// because a cold start from an SD card can take a while.
+const PROBE: Duration = Duration::from_millis(400);
 
 impl PipeSink {
     pub fn new() -> Self {
-        Self { child: None, failed: false, chosen: None }
+        // muOS: aplay is the one that works (its pw-play is too old for --raw).
+        let order = if cfg!(feature = "muos") { [2, 0, 1] } else { [0, 1, 2] };
+        let players = order
+            .iter()
+            .map(|&i| (PLAYERS[i].0.to_string(), PLAYERS[i].1.iter().map(|a| a.to_string()).collect()))
+            .collect();
+        Self::with_players(players)
     }
 
-    fn start(&mut self) -> Option<(Child, ChildStdin)> {
-        let order: Vec<usize> = match self.chosen {
+    /// Custom player programs (tests).
+    pub fn with_players(players: Vec<(String, Vec<String>)>) -> Self {
+        let n = players.len();
+        Self { child: None, players, bad: vec![false; n], chosen: None, gave_up: false, pacer: Pacer::default() }
+    }
+
+    pub fn chosen_player(&self) -> Option<&str> {
+        self.chosen.map(|i| self.players[i].0.as_str())
+    }
+
+    fn start(&mut self) -> Option<(Child, ChildStdin, usize)> {
+        let candidates: Vec<usize> = match self.chosen {
             Some(i) => vec![i],
-            None => (0..PLAYERS.len()).collect(),
+            None => (0..self.players.len()).filter(|&i| !self.bad[i]).collect(),
         };
-        for i in order {
-            let (cmd, args) = PLAYERS[i];
+        for i in candidates {
+            let (cmd, args) = &self.players[i];
             let Ok(mut child) = Command::new(cmd)
                 .args(args)
                 .stdin(Stdio::piped())
@@ -117,24 +147,31 @@ impl PipeSink {
                 .stderr(Stdio::null())
                 .spawn()
             else {
+                self.bad[i] = true;
                 continue;
             };
-            // A player that doesn't accept our options exits right away.
+            // A player that doesn't accept our options usually exits right away.
             if self.chosen.is_none() {
-                thread::sleep(Duration::from_millis(150));
+                thread::sleep(PROBE);
                 if let Ok(Some(status)) = child.try_wait() {
                     eprintln!("audio: {cmd} exited ({status}), trying the next player");
+                    self.bad[i] = true;
                     continue;
                 }
+                eprintln!("audio: trying {cmd}");
             }
             let stdin = child.stdin.take()?;
-            if self.chosen.is_none() {
-                eprintln!("audio: playing through {cmd}");
-            }
-            self.chosen = Some(i);
-            return Some((child, stdin));
+            return Some((child, stdin, i));
         }
         None
+    }
+
+    fn stop_child(&mut self) {
+        if let Some((mut child, stdin, _)) = self.child.take() {
+            drop(stdin);
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 }
 
@@ -146,36 +183,47 @@ impl Default for PipeSink {
 
 impl Sink for PipeSink {
     fn write(&mut self, pcm: &[i16]) -> Result<(), String> {
-        if self.child.is_none() && !self.failed {
+        if self.child.is_none() && !self.gave_up {
             self.child = self.start();
-            if self.child.is_none() {
-                self.failed = true;
-                eprintln!("audio: no pw-play/paplay/aplay found, playing silently");
+            if self.child.is_none() && self.chosen.is_none() {
+                self.gave_up = true;
+                eprintln!("audio: no working pw-play/paplay/aplay, playing silently");
             }
         }
-        match &mut self.child {
-            Some((_, stdin)) => {
-                let bytes: Vec<u8> = pcm.iter().flat_map(|s| s.to_le_bytes()).collect();
-                if stdin.write_all(&bytes).is_err() {
-                    self.flush();
+        if let Some((_, stdin, i)) = &mut self.child {
+            let i = *i;
+            let bytes: Vec<u8> = pcm.iter().flat_map(|s| s.to_le_bytes()).collect();
+            if stdin.write_all(&bytes).is_ok() {
+                if self.chosen.is_none() {
+                    eprintln!("audio: playing through {}", self.players[i].0);
+                    self.chosen = Some(i);
                 }
-                Ok(())
+                // Don't let the pipe fill up (it holds ~0.3 s): stay just ahead.
+                self.pacer.wrote(pcm.len() / CHANNELS, OUT_RATE);
+                return Ok(());
             }
-            // Keep time without sound.
-            None => {
-                thread::sleep(Duration::from_secs_f64(pcm.len() as f64 / CHANNELS as f64 / OUT_RATE as f64));
-                Ok(())
+            // The player died: never use it again; the next write tries another.
+            eprintln!("audio: {} stopped accepting audio, trying the next player", self.players[i].0);
+            self.bad[i] = true;
+            if self.chosen == Some(i) {
+                self.chosen = None;
             }
+            self.stop_child();
+            self.gave_up = false;
         }
+        // No player (yet): keep real time, silently.
+        self.pacer.wrote(pcm.len() / CHANNELS, OUT_RATE);
+        Ok(())
     }
 
     fn flush(&mut self) {
         // Killing the player is the only way to drop what it has buffered.
-        if let Some((mut child, stdin)) = self.child.take() {
-            drop(stdin);
-            let _ = child.kill();
-            let _ = child.wait();
-        }
+        self.stop_child();
+        self.pacer.reset();
+    }
+
+    fn latency_frames(&self) -> u64 {
+        (AHEAD.as_secs_f64() * OUT_RATE as f64) as u64
     }
 }
 
@@ -332,6 +380,39 @@ pub mod device {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn player(cmd: &str, args: &[&str]) -> (String, Vec<String>) {
+        (cmd.to_string(), args.iter().map(|a| a.to_string()).collect())
+    }
+
+    #[test]
+    fn skips_players_that_fail_early_or_late() {
+        // 1: rejects its options at once; 2: looks fine, then dies (a slow
+        // cold start); 3: works. 2 s of audio in 20 ms writes.
+        let mut sink = PipeSink::with_players(vec![
+            player("false", &[]),
+            player("sh", &["-c", "sleep 0.6; exit 1"]),
+            player("sh", &["-c", "cat > /dev/null"]),
+        ]);
+        let chunk = vec![0i16; 960 * CHANNELS];
+        for _ in 0..100 {
+            sink.write(&chunk).unwrap();
+        }
+        assert_eq!(sink.chosen_player(), Some("sh"));
+        assert_eq!(sink.bad, vec![true, true, false]);
+    }
+
+    #[test]
+    fn without_a_player_playback_keeps_real_time() {
+        let mut sink = PipeSink::with_players(vec![player("false", &[])]);
+        let start = Instant::now();
+        let chunk = vec![0i16; 960 * CHANNELS]; // 20 ms
+        for _ in 0..25 {
+            sink.write(&chunk).unwrap();
+        }
+        // 0.5 s of audio must not finish in a blink (it was racing before).
+        assert!(start.elapsed() >= Duration::from_millis(350), "{:?}", start.elapsed());
+    }
 
     #[test]
     fn pacer_keeps_real_time() {
