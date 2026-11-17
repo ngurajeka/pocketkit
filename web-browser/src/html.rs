@@ -409,20 +409,26 @@ pub struct Layout {
     pub link_line: Vec<Option<usize>>,
 }
 
-/// Word-wraps `doc` to `cols` characters per line.
-pub fn layout(doc: &Doc, cols: usize) -> Layout {
-    let cols = cols.max(4);
+/// Word-wraps `doc` to a character grid of `cols` columns.
+pub fn layout_cols(doc: &Doc, cols: usize) -> Layout {
+    layout(doc, cols.max(4), &|s: &str| s.chars().count())
+}
+
+/// Word-wraps `doc` to `width`, in whatever unit `measure` returns (pixels
+/// for the on-screen font, characters for `layout_cols`).
+pub fn layout(doc: &Doc, width: usize, measure: &dyn Fn(&str) -> usize) -> Layout {
     let mut out = Layout { lines: Vec::new(), link_line: vec![None; doc.links.len()] };
     let mut cur: Vec<Seg> = Vec::new();
     let mut col = 0;
+    let space_w = measure(" ");
 
-    fn add(cur: &mut Vec<Seg>, col: &mut usize, s: &str, link: Option<usize>) {
-        *col += s.chars().count();
+    let add = |cur: &mut Vec<Seg>, col: &mut usize, s: &str, link: Option<usize>| {
+        *col += measure(s);
         match cur.last_mut() {
             Some(seg) if seg.link == link => seg.text.push_str(s),
             _ => cur.push(Seg { text: s.to_string(), link }),
         }
-    }
+    };
     fn finish(out: &mut Layout, cur: &mut Vec<Seg>, col: &mut usize) {
         while let Some(last) = cur.last_mut() {
             let trimmed = last.text.trim_end_matches(' ').len();
@@ -453,21 +459,43 @@ pub fn layout(doc: &Doc, cols: usize) -> Layout {
                         Some(w) => (w, true),
                         None => (word, false),
                     };
-                    let chars: Vec<char> = word.chars().collect();
-                    if col + chars.len() > cols && col > 0 {
+                    let w = measure(word);
+                    if col + w > width && col > 0 {
                         finish(&mut out, &mut cur, &mut col);
                     }
-                    for piece in chars.chunks(cols) {
-                        if col + piece.len() > cols {
-                            finish(&mut out, &mut cur, &mut col);
+                    if w <= width {
+                        if !word.is_empty() {
+                            add(&mut cur, &mut col, word, *link);
+                            if let Some(i) = link {
+                                out.link_line[*i].get_or_insert(out.lines.len());
+                            }
                         }
-                        let s: String = piece.iter().collect();
-                        add(&mut cur, &mut col, &s, *link);
-                        if let Some(i) = link {
-                            out.link_line[*i].get_or_insert(out.lines.len());
+                    } else {
+                        // Longer than a whole line: break it wherever it overflows.
+                        let mut piece = String::new();
+                        for ch in word.chars() {
+                            let mut next = piece.clone();
+                            next.push(ch);
+                            if col + measure(&next) > width && !piece.is_empty() {
+                                add(&mut cur, &mut col, &piece, *link);
+                                if let Some(i) = link {
+                                    out.link_line[*i].get_or_insert(out.lines.len());
+                                }
+                                finish(&mut out, &mut cur, &mut col);
+                                piece.clear();
+                                piece.push(ch);
+                            } else {
+                                piece = next;
+                            }
+                        }
+                        if !piece.is_empty() {
+                            add(&mut cur, &mut col, &piece, *link);
+                            if let Some(i) = link {
+                                out.link_line[*i].get_or_insert(out.lines.len());
+                            }
                         }
                     }
-                    if space && col > 0 && col < cols {
+                    if space && col > 0 && col + space_w <= width {
                         add(&mut cur, &mut col, " ", *link);
                     }
                 }
@@ -499,7 +527,7 @@ mod tests {
     }
 
     fn all_text(doc: &Doc) -> String {
-        let l = layout(doc, 200);
+        let l = layout_cols(doc, 200);
         (0..l.lines.len()).map(|i| line_text(&l, i)).collect::<Vec<_>>().join("\n")
     }
 
@@ -564,7 +592,7 @@ mod tests {
     #[test]
     fn wraps_words_and_splits_long_ones() {
         let doc = Doc::from_html("<p>the quick brown fox abcdefghijklmnop</p>");
-        let l = layout(&doc, 10);
+        let l = layout_cols(&doc, 10);
         let lines: Vec<String> = (0..l.lines.len()).map(|i| line_text(&l, i)).collect();
         assert_eq!(lines, vec!["the quick", "brown fox", "abcdefghij", "klmnop"]);
         assert!(lines.iter().all(|s| s.chars().count() <= 10));
@@ -573,7 +601,7 @@ mod tests {
     #[test]
     fn records_first_line_of_each_link() {
         let doc = Doc::from_html("<p>intro text here</p><p><a href=a>first</a> and <a href=b>second</a></p>");
-        let l = layout(&doc, 12);
+        let l = layout_cols(&doc, 12);
         // "intro text" / "here" / "" / "first and" / "second"
         assert_eq!(l.link_line, vec![Some(3), Some(4)]);
     }
@@ -581,7 +609,7 @@ mod tests {
     #[test]
     fn survives_truncated_markup() {
         for html in ["<a href=\"x", "<p", "<!-- open", "<script>never closed", "&#xZZ;", "<a href=x>t"] {
-            let _ = layout(&Doc::from_html(html), 40);
+            let _ = layout_cols(&Doc::from_html(html), 40);
         }
     }
 }

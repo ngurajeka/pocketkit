@@ -5,8 +5,7 @@
 use std::{path::Path, sync::{atomic::AtomicBool, mpsc}};
 
 use web_browser::{
-    app::cols,
-    html::layout,
+    html::layout_cols,
     net::{self, Event, Kind},
 };
 
@@ -20,7 +19,7 @@ fn main() {
     match net::fetch(&net::agent(), kind, &url, Path::new("downloads"), &AtomicBool::new(false), &tx) {
         Ok(Event::Page { url, doc, note }) => {
             println!("== {} <{url}> {}", doc.title, note.unwrap_or_default());
-            let l = layout(&doc, cols(2));
+            let l = layout_cols(&doc, 40);
             for line in &l.lines {
                 let text: String = line
                     .iter()

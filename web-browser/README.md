@@ -14,10 +14,10 @@ Needs Wi-Fi to be on (see `../wifi`).
 | Left / Right, L1 / R1 | arrows, Q / W | page up / down | page up / down | move; L1 clear, R1 `.com` |
 | A | Z or Space | open link | open | type key |
 | Y | V | **save link to SD card** | | space |
-| B | X | back (or cancel a download) | back to page | delete |
+| B | X | back (or cancel a download) | back to page, or quit | delete |
 | X | C | edit address | type address | abc / ABC / symbols |
 | START | Enter | home | | go |
-| SELECT | Tab | big / small text | big / small text | cancel |
+| SELECT | Tab | normal / small text | normal / small text | cancel |
 | MENU | Esc | quit | quit | quit |
 
 Typing something without a dot, or with spaces, searches (Brave Search by default).

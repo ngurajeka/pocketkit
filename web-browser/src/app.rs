@@ -2,40 +2,25 @@
 
 use std::{env, fs, path::PathBuf, sync::mpsc::TryRecvError, time::Duration};
 
+use minui_common::ui::{self, Ui};
+
 use crate::{
     html::{layout, Doc, Layout},
     input::Button,
-    keyboard::{KbResult, Keyboard, COLS as KB_COLS, PAGE_NAMES, ROWS as KB_ROWS},
+    keyboard::{KbResult, Keyboard},
     net::{self, Event, Job, Kind},
-    render::{fit, fit_end, Canvas, H, W},
+    render::{Canvas, W},
 };
 
-const BG: u32 = 0xFAF8F2;
-const FG: u32 = 0x24262B;
-const DIM: u32 = 0x8A8F98;
-const LINK: u32 = 0x1F5FBF;
-const SEL_BG: u32 = 0x1F5FBF;
-const SEL_FG: u32 = 0xFFFFFF;
-const BAR: u32 = 0x2B2D42;
-const BAR_FG: u32 = 0xEDF2F4;
-const ACCENT: u32 = 0xE07A3F;
-const KEY_BG: u32 = 0xE4E1D8;
-
-const MARGIN: usize = 8;
 const STATUS_SECS: f32 = 4.0;
 const MAX_HISTORY: usize = 30;
-
-fn line_h(scale: usize) -> usize {
-    10 * scale
-}
-/// Text columns that fit on screen at this text size.
-pub fn cols(scale: usize) -> usize {
-    (W - 2 * MARGIN - 6) / (8 * scale)
-}
-/// Text rows between the title bar and the status bar.
-pub fn rows(scale: usize) -> usize {
-    (H - 2 * line_h(scale)) / line_h(scale)
-}
+/// Page text sizes (MinUI's "small" and "tiny"); SELECT switches.
+const TEXT_NORMAL: f32 = ui::FONT_SMALL;
+const TEXT_SMALL: f32 = ui::FONT_TINY;
+/// Room on the right of the page for the scrollbar.
+const SCROLLBAR_W: i32 = 10;
+/// Home list rows shown at once.
+const HOME_ROWS: usize = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bookmark {
@@ -98,14 +83,16 @@ pub struct App {
     download_dir: PathBuf,
     history: Vec<Entry>,
     layout: Layout,
-    /// Text size: 2 = big (default), 1 = small.
-    pub scale: usize,
+    /// SELECT toggles a smaller page font.
+    pub small_text: bool,
     job: Option<Job>,
     job_label: String,
     progress: (u64, Option<u64>),
     status: Option<(String, f32)>,
     agent: ureq::Agent,
     time: f32,
+    quitting: bool,
+    ui: Ui,
 }
 
 impl App {
@@ -119,13 +106,15 @@ impl App {
             download_dir: config.download_dir,
             history: Vec::new(),
             layout: Layout::default(),
-            scale: 2,
+            small_text: false,
             job: None,
             job_label: String::new(),
             progress: (0, None),
             status: None,
             agent: net::agent(),
             time: 0.0,
+            quitting: false,
+            ui: Ui::new(),
         }
     }
 
@@ -141,9 +130,36 @@ impl App {
         self.history.last()
     }
 
+    fn text_size(&self) -> f32 {
+        if self.small_text {
+            TEXT_SMALL
+        } else {
+            TEXT_NORMAL
+        }
+    }
+
+    fn line_h(&self) -> i32 {
+        self.ui.font.height(self.text_size()) + 6
+    }
+
+    /// Page text area: below the title pill, above the hints.
+    fn body(&self) -> (i32, i32, i32, i32) {
+        let top = ui::CONTENT_TOP;
+        (ui::PADDING, top, W as i32 - 2 * ui::PADDING - SCROLLBAR_W, ui::HINTS_TOP - ui::PADDING / 2 - top)
+    }
+
+    /// Lines of page text that fit on screen.
+    pub fn page_rows(&self) -> usize {
+        (self.body().3 / self.line_h()).max(1) as usize
+    }
+
     fn relayout(&mut self) {
-        let cols = cols(self.scale);
-        self.layout = self.history.last().map(|e| layout(&e.doc, cols)).unwrap_or_default();
+        let size = self.text_size();
+        let width = self.body().2 as usize;
+        let font = &self.ui.font;
+        let measure = |s: &str| font.measure(s, size) as usize;
+        let new = self.history.last().map(|e| layout(&e.doc, width, &measure)).unwrap_or_default();
+        self.layout = new;
         let max = self.max_scroll();
         if let Some(e) = self.history.last_mut() {
             e.scroll = e.scroll.min(max);
@@ -151,7 +167,7 @@ impl App {
     }
 
     fn max_scroll(&self) -> usize {
-        self.layout.lines.len().saturating_sub(rows(self.scale))
+        self.layout.lines.len().saturating_sub(self.page_rows())
     }
 
     /// Shows a fetched page (also used by the snapshot example).
@@ -231,16 +247,16 @@ impl App {
         // Keep the same part of the page on screen.
         let anchor = self.current().and_then(|e| e.selected.and_then(|i| self.layout.link_line[i]).or(Some(e.scroll)));
         let ratio = anchor.map(|a| a as f32 / self.layout.lines.len().max(1) as f32);
-        self.scale = if self.scale == 2 { 1 } else { 2 };
+        self.small_text = !self.small_text;
         self.relayout();
         if let (Some(r), true) = (ratio, !self.history.is_empty()) {
             let target = (r * self.layout.lines.len() as f32) as usize;
             let max = self.max_scroll();
-            let rows = rows(self.scale);
+            let rows = self.page_rows();
             let e = self.history.last_mut().unwrap();
             e.scroll = target.saturating_sub(rows / 3).min(max);
         }
-        self.flash(if self.scale == 2 { "Big text" } else { "Small text" });
+        self.flash(if self.small_text { "Small text" } else { "Normal text" });
     }
 
     fn handle_home(&mut self, button: Button) {
@@ -248,8 +264,8 @@ impl App {
         match button {
             Button::Up => self.home_sel = (self.home_sel + n - 1) % n,
             Button::Down => self.home_sel = (self.home_sel + 1) % n,
-            Button::L1 | Button::Left => self.home_sel = self.home_sel.saturating_sub(rows(self.scale)),
-            Button::R1 | Button::Right => self.home_sel = (self.home_sel + rows(self.scale)).min(n - 1),
+            Button::L1 | Button::Left => self.home_sel = self.home_sel.saturating_sub(HOME_ROWS),
+            Button::R1 | Button::Right => self.home_sel = (self.home_sel + HOME_ROWS).min(n - 1),
             Button::A if self.home_sel == 0 => self.open_keyboard(""),
             Button::A => {
                 let url = self.bookmarks[self.home_sel - 1].url.clone();
@@ -257,12 +273,13 @@ impl App {
             }
             Button::X => self.open_keyboard(""),
             Button::B if !self.history.is_empty() => self.screen = Screen::Page,
+            Button::B => self.quitting = true,
             _ => {}
         }
     }
 
     fn handle_page(&mut self, button: Button) {
-        let rows = rows(self.scale);
+        let rows = self.page_rows();
         match button {
             Button::Down => self.next_link(),
             Button::Up => self.prev_link(),
@@ -302,7 +319,7 @@ impl App {
     /// Like a text browser: Down selects the next link if it's on screen,
     /// otherwise scrolls half a screen towards it.
     fn next_link(&mut self) {
-        let rows = rows(self.scale);
+        let rows = self.page_rows();
         let Some(e) = self.history.last() else { return };
         let top = e.scroll;
         let start = match e.selected {
@@ -318,7 +335,7 @@ impl App {
     }
 
     fn prev_link(&mut self) {
-        let rows = rows(self.scale);
+        let rows = self.page_rows();
         let Some(e) = self.history.last() else { return };
         let top = e.scroll;
         let end = match e.selected {
@@ -336,7 +353,7 @@ impl App {
 
     fn on_screen(&self, link: usize) -> bool {
         let top = self.current().map_or(0, |e| e.scroll);
-        self.layout.link_line.get(link).copied().flatten().is_some_and(|l| l >= top && l < top + rows(self.scale))
+        self.layout.link_line.get(link).copied().flatten().is_some_and(|l| l >= top && l < top + self.page_rows())
     }
 
     fn select(&mut self, link: Option<usize>) {
@@ -416,155 +433,88 @@ impl App {
     // --------------------------------------------------------------- render
 
     pub fn render(&self, c: &mut Canvas) {
-        c.fill(BG);
         match self.screen {
             Screen::Home => self.draw_home(c),
             Screen::Page => self.draw_page(c),
-            Screen::Keyboard => self.draw_keyboard(c),
+            Screen::Keyboard => self.ui.keyboard(c, &self.kb, "Address or search", "GO", self.time),
         }
-        self.draw_status_bar(c);
-    }
-
-    fn draw_title_bar(&self, c: &mut Canvas, title: &str) {
-        let s = self.scale;
-        c.rect(0, 0, W as i32, line_h(s) as i32, BAR);
-        c.text(MARGIN as i32, s as i32, &fit(title, cols(s)), s, BAR_FG);
-    }
-
-    fn row_y(&self, row: usize) -> i32 {
-        ((row + 1) * line_h(self.scale) + self.scale) as i32
+        if self.busy() {
+            let (done, total) = self.progress;
+            let dots = ".".repeat((self.time * 3.0) as usize % 4);
+            let (text, frac) = match total {
+                Some(t) if t > 0 => (format!("{}  {}%", self.job_label, (done * 100 / t).min(100)), Some(done as f32 / t as f32)),
+                _ if done > 0 => (format!("{}  {}", self.job_label, net::human_size(done)), None),
+                _ => (format!("{}{dots}", self.job_label), None),
+            };
+            self.ui.progress(c, &text, frac);
+        } else if let Some((msg, _)) = &self.status {
+            self.ui.toast(c, msg);
+        }
     }
 
     fn draw_home(&self, c: &mut Canvas) {
-        let s = self.scale;
-        self.draw_title_bar(c, "Web Browser");
-        let rows = rows(s);
-        let items: Vec<String> = std::iter::once("> Type an address or search".to_string())
-            .chain(self.bookmarks.iter().map(|b| b.name.clone()))
-            .collect();
-        // Leave the last row for the download folder hint.
-        let visible = rows - 1;
-        let first = self.home_sel.saturating_sub(visible - 1);
-        for (row, (i, item)) in items.iter().enumerate().skip(first).take(visible).enumerate() {
-            let y = self.row_y(row);
-            let selected = i == self.home_sel;
-            if selected {
-                c.rect(0, y - s as i32, W as i32, line_h(s) as i32, SEL_BG);
-            }
-            let color = if selected { SEL_FG } else if i == 0 { ACCENT } else { FG };
-            c.text(MARGIN as i32, y, &fit(item, cols(s)), s, color);
+        self.ui.clear(c);
+        self.ui.title(c, "Web Browser");
+        let items: Vec<&str> =
+            std::iter::once("Type an address or search").chain(self.bookmarks.iter().map(|b| b.name.as_str())).collect();
+        let first = self.home_sel.saturating_sub(HOME_ROWS - 1);
+        for (row, (i, item)) in items.iter().enumerate().skip(first).take(HOME_ROWS).enumerate() {
+            self.ui.row(c, row, item, i == self.home_sel, None, false);
         }
-        let hint = format!("Saves to {}", self.download_dir.display());
-        c.text(MARGIN as i32, self.row_y(rows - 1), &fit_end(&hint, cols(s)), s, DIM);
+        self.ui.scroll_marks(c, first, HOME_ROWS, items.len());
+        if self.history.is_empty() {
+            self.ui.hints(c, &[("B", "QUIT")], false);
+        } else {
+            self.ui.hints(c, &[("B", "PAGE")], false);
+        }
+        self.ui.hints(c, &[("X", "TYPE"), ("A", "OPEN")], true);
     }
 
     fn draw_page(&self, c: &mut Canvas) {
-        let s = self.scale;
+        self.ui.clear(c);
         let Some(e) = self.current() else { return };
         let title = if e.doc.title.is_empty() { e.url.as_str() } else { e.doc.title.as_str() };
-        self.draw_title_bar(c, title);
-        let rows = rows(s);
-        let cw = (8 * s) as i32;
+        self.ui.title(c, title);
+        let size = self.text_size();
+        let font = &self.ui.font;
+        let (bx, by, _, bh) = self.body();
+        let lh = self.line_h();
+        let th = font.height(size);
+        let rows = self.page_rows();
         for (row, line) in self.layout.lines.iter().skip(e.scroll).take(rows).enumerate() {
-            let y = self.row_y(row);
-            let mut x = MARGIN as i32;
+            let y = by + row as i32 * lh + (lh - th) / 2;
+            let mut x = bx;
             for seg in line {
-                let width = seg.text.chars().count() as i32 * cw;
+                let w = font.measure(&seg.text, size);
                 let color = match seg.link {
                     Some(i) if Some(i) == e.selected => {
-                        c.rect(x - 1, y - s as i32, width + 2, line_h(s) as i32, SEL_BG);
-                        SEL_FG
+                        ui::rounded_rect(c, x - 6, y - 3, w + 12, th + 6, 8, ui::WHITE);
+                        ui::BLACK
                     }
                     Some(_) => {
-                        c.rect(x, y + 8 * s as i32, width, s as i32, LINK);
-                        LINK
+                        c.rect(x, y + th - 2, w, 2, ui::LIGHT_GRAY);
+                        ui::WHITE
                     }
-                    None => FG,
+                    None => ui::LIGHT_TEXT,
                 };
-                x = c.text(x, y, &seg.text, s, color);
+                font.draw(c, x, y, &seg.text, size, color);
+                x += w;
             }
         }
-        // Scrollbar.
         let total = self.layout.lines.len();
         if total > rows {
-            let top = line_h(s) as i32;
-            let track = (rows * line_h(s)) as i32;
-            let thumb = (track * rows as i32 / total as i32).max(8);
-            let y = top + (track - thumb) * e.scroll as i32 / self.max_scroll().max(1) as i32;
-            c.rect(W as i32 - 5, top, 5, track, KEY_BG);
-            c.rect(W as i32 - 5, y, 5, thumb, DIM);
+            let x = W as i32 - ui::PADDING / 2 - 6;
+            let thumb = (bh * rows as i32 / total as i32).max(24);
+            let ty = by + (bh - thumb) * e.scroll as i32 / self.max_scroll().max(1) as i32;
+            ui::rounded_rect(c, x, by, 6, bh, 3, ui::DARK_GRAY);
+            ui::rounded_rect(c, x, ty, 6, thumb, 3, ui::GRAY);
         }
-    }
-
-    fn draw_keyboard(&self, c: &mut Canvas) {
-        let s = self.scale;
-        self.draw_title_bar(c, "Type an address or search");
-        // Input box (always big text so it's readable).
-        let box_y = line_h(s) as i32 + 12;
-        c.rect(MARGIN as i32, box_y, (W - 2 * MARGIN) as i32, 28, 0xFFFFFF);
-        c.rect(MARGIN as i32, box_y + 27, (W - 2 * MARGIN) as i32, 2, LINK);
-        let max_chars = (W - 2 * MARGIN - 16) / 16 - 1;
-        let shown = fit_end(&self.kb.text, max_chars);
-        let end = c.text(MARGIN as i32 + 6, box_y + 6, &shown, 2, FG);
-        if (self.time * 2.0) as i32 % 2 == 0 {
-            c.rect(end + 1, box_y + 4, 2, 20, LINK);
-        }
-        // Keys.
-        let (kw, kh, gap) = (56, 44, 4);
-        let x0 = (W as i32 - (KB_COLS as i32 * (kw + gap) - gap)) / 2;
-        let y0 = box_y + 44;
-        for row in 0..KB_ROWS {
-            for col in 0..KB_COLS {
-                let x = x0 + col as i32 * (kw + gap);
-                let y = y0 + row as i32 * (kh + gap);
-                let selected = row == self.kb.row && col == self.kb.col;
-                c.rect(x, y, kw, kh, if selected { SEL_BG } else { KEY_BG });
-                let ch = self.kb.key_at(row, col);
-                c.glyph(x + (kw - 16) / 2, y + (kh - 16) / 2, ch, 2, if selected { SEL_FG } else { FG });
-            }
-        }
-        let hints = [
-            format!("A type B delete Y space X {}", PAGE_NAMES[(self.kb.page + 1) % PAGE_NAMES.len()]),
-            "L1 clear R1 .com START go SELECT back".to_string(),
-        ];
-        let hy = y0 + KB_ROWS as i32 * (kh + gap) + 8;
-        for (i, h) in hints.iter().enumerate() {
-            c.text(MARGIN as i32, hy + i as i32 * 20, &fit(h, (W - 2 * MARGIN) / 16), 2, DIM);
-        }
-    }
-
-    fn draw_status_bar(&self, c: &mut Canvas) {
-        let s = self.scale;
-        let lh = line_h(s) as i32;
-        let y = H as i32 - lh;
-        c.rect(0, y, W as i32, lh, BAR);
-        let n = cols(s);
-        let text = if self.busy() {
-            let (done, total) = self.progress;
-            let mut t = self.job_label.clone();
-            match total {
-                Some(total) if total > 0 => {
-                    let pct = (done * 100 / total).min(100);
-                    c.rect(0, y, (W as u64 * done.min(total) / total) as i32, lh, ACCENT);
-                    t = format!("{} {pct}%", fit(&t, n.saturating_sub(5)));
-                }
-                _ if done > 0 => t = format!("{} {}", fit(&t, n.saturating_sub(10)), net::human_size(done)),
-                _ => {}
-            }
-            let dots = ".".repeat((self.time * 3.0) as usize % 4);
-            format!("{}{dots}", fit(&t, n.saturating_sub(4)))
-        } else if let Some((msg, _)) = &self.status {
-            msg.clone()
+        self.ui.hints(c, &[("B", "BACK"), ("X", "URL")], false);
+        if e.selected.is_some() {
+            self.ui.hints(c, &[("Y", "SAVE"), ("A", "OPEN")], true);
         } else {
-            match self.screen {
-                Screen::Home if !self.history.is_empty() => "A open  X type  B back to page",
-                Screen::Home => "A open  X type  SELECT text size",
-                Screen::Page => "A open Y save B back X url START home",
-                Screen::Keyboard => "",
-            }
-            .to_string()
-        };
-        c.text(MARGIN as i32, y + s as i32, &fit(&text, n), s, BAR_FG);
+            self.ui.hints(c, &[("START", "HOME")], true);
+        }
     }
 }
 
@@ -578,11 +528,15 @@ impl minui_common::App for App {
     fn render(&self, canvas: &mut Canvas) {
         App::render(self, canvas);
     }
+    fn quit(&self) -> bool {
+        self.quitting
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::render::H;
 
     fn app_with(html: &str) -> App {
         let mut app = App::new(Config { bookmarks: vec![], download_dir: PathBuf::from("dl") });
@@ -622,7 +576,8 @@ mod tests {
         app.handle(Button::Down); // next link is far away: scroll instead
         assert!(app.current().unwrap().scroll > 0);
         assert_eq!(selected(&app), None);
-        for _ in 0..50 {
+        // Enough half-page scrolls to reach the end at any text size.
+        for _ in 0..200 {
             app.handle(Button::Down);
         }
         assert_eq!(selected(&app), Some(2));
@@ -661,7 +616,7 @@ mod tests {
         let mut app = app_with(&"<p>word </p>".repeat(200));
         let big = app.layout.lines.len();
         app.handle(Button::Select);
-        assert_eq!(app.scale, 1);
+        assert!(app.small_text);
         assert!(app.layout.lines.len() <= big);
     }
 
