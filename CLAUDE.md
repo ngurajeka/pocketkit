@@ -28,6 +28,8 @@ ARM builds can be smoke-tested with `qemu-arm` (`nix build nixpkgs#qemu-user`), 
 
 From the repo root, `./package.sh` builds every project that has a `package.sh` (or `./package.sh wifi web-browser` for some) and collects the paks in the root `dist/`, ready to copy to `Tools/miyoomini/`.
 
+`./deploy.sh [project...]` builds and copies paks to the Mini over Wi-Fi with adb (from the dev shell): on the Mini, connect with Wifi then open MinUI's ADBD.pak (adbd on port 5555, no auth). The Mini's IP is set once with `--ip` and kept in the untracked `.miyoo-ip`; `--no-build` skips building. It always replaces binaries and `launch.sh` but never overwrites `*.txt` already on the Mini (user-edited config). adb's background server inherits stdout, so redirect it (`adb start-server >/dev/null 2>&1`) or piped commands hang. With adbd running you can also read device logs, e.g. `adb shell cat /mnt/SDCARD/.userdata/miyoomini/music/log.txt`.
+
 Inside the dev shell, from a project directory:
 
 ```sh

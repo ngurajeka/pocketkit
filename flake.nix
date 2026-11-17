@@ -61,7 +61,8 @@
         in
         {
           default = pkgs.mkShell ({
-            packages = [ rust pkgs.pkg-config ] ++ desktopLibs;
+            # android-tools: adb, used by deploy.sh to copy paks to the Mini over Wi-Fi.
+            packages = [ rust pkgs.pkg-config pkgs.android-tools ] ++ desktopLibs;
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath desktopLibs;
             # package.sh: plain cargo + rust-lld against Rust's bundled (self-contained)
             # musl — no Docker/cross, no zig, no full C cross toolchain.
