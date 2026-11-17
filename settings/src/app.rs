@@ -8,26 +8,18 @@ use std::{
 
 use minui_common::{
     input::Button,
-    keyboard::{KbResult, Keyboard, COLS as KB_COLS, PAGE_NAMES, ROWS as KB_ROWS},
+    keyboard::{KbResult, Keyboard},
     minui,
-    render::{fit, fit_end, Canvas, H, W},
+    render::{Canvas, W},
+
     settings::{self, Settings},
+    ui::{self, Ui},
 };
 
 use crate::autostart::{self, Startup};
 
-const BG: u32 = 0xFAF8F2;
-const FG: u32 = 0x24262B;
-const DIM: u32 = 0x8A8F98;
-const SEL_BG: u32 = 0x1F5FBF;
-const SEL_FG: u32 = 0xFFFFFF;
-const BAR: u32 = 0x2B2D42;
-const BAR_FG: u32 = 0xEDF2F4;
-const ACCENT: u32 = 0x1F5FBF;
-const KEY_BG: u32 = 0xE4E1D8;
-const LINE: i32 = 20;
-const MARGIN: i32 = 8;
-const COLS: usize = (W - 2 * MARGIN as usize) / 16;
+/// Rows shown at once (the rest scroll); room is left for the help text.
+const VISIBLE_ROWS: usize = 4;
 const FLASH_SECS: f32 = 2.5;
 
 pub const SCREEN_OFF_CHOICES: [(u32, &str); 6] =
@@ -122,6 +114,10 @@ pub struct App {
     pub rtc: bool,
     pub hd560: bool,
     pub editing: Option<Keyboard>,
+    /// First visible row.
+    top: usize,
+    quitting: bool,
+    ui: Ui,
     flash: Option<(String, f32)>,
     time: f32,
 }
@@ -147,6 +143,9 @@ impl App {
             rows,
             sel: 0,
             editing: None,
+            top: 0,
+            quitting: false,
+            ui: Ui::new(),
             flash: None,
             time: 0.0,
         }
@@ -318,7 +317,14 @@ impl App {
             Button::Left => self.change(-1),
             Button::Right => self.change(1),
             Button::A => self.change(0),
+            Button::B => self.quitting = true,
             _ => {}
+        }
+        // Keep the selection on screen.
+        if self.sel < self.top {
+            self.top = self.sel;
+        } else if self.sel >= self.top + VISIBLE_ROWS {
+            self.top = self.sel + 1 - VISIBLE_ROWS;
         }
     }
 
@@ -359,95 +365,48 @@ impl App {
     // ------------------------------------------------------------- drawing
 
     pub fn render(&self, c: &mut Canvas) {
-        c.fill(BG);
         if let Some(kb) = &self.editing {
-            self.draw_keyboard(c, kb);
-        } else {
-            self.draw_list(c);
+            self.ui.keyboard(c, kb, "Music folder", "SAVE", self.time);
+            if let Some(m) = self.flash_text() {
+                self.ui.toast(c, m);
+            }
+            return;
         }
-        let y = H as i32 - LINE;
-        c.rect(0, y, W as i32, LINE, BAR);
-        let text = match (self.flash_text(), &self.editing) {
-            (Some(m), _) => m.to_string(),
-            (None, Some(_)) => String::new(),
-            (None, None) => "</> change  A toggle/edit  MENU quit".into(),
-        };
-        c.text(MARGIN, y + 2, &fit(&text, COLS), 2, BAR_FG);
-    }
-
-    fn title(c: &mut Canvas, text: &str) {
-        c.rect(0, 0, W as i32, LINE, BAR);
-        c.text(MARGIN, 2, &fit(text, COLS), 2, BAR_FG);
-    }
-
-    fn draw_list(&self, c: &mut Canvas) {
-        Self::title(c, "Settings");
-        for (i, &row) in self.rows.iter().enumerate() {
-            let y = LINE + 8 + i as i32 * (LINE + 6);
+        self.ui.clear(c);
+        self.ui.title(c, "Settings");
+        let first = self.top;
+        for (i, &row) in self.rows.iter().enumerate().skip(first).take(VISIBLE_ROWS) {
             let selected = i == self.sel;
-            if selected {
-                c.rect(0, y - 3, W as i32, LINE + 2, SEL_BG);
-            }
-            let fg = if selected { SEL_FG } else { FG };
-            c.text(MARGIN, y, row.label(), 2, fg);
             let value = self.value(row);
-            let room = COLS - row.label().len() - 2;
-            let shown = if row == Row::MusicDir { fit_end(&value, room - 2) } else { fit(&value, room - 2) };
-            let shown = if selected && row != Row::MusicDir { format!("< {shown} >") } else { shown };
-            let x = W as i32 - MARGIN - 16 * shown.chars().count() as i32;
-            c.text(x, y, &shown, 2, if selected { SEL_FG } else { ACCENT });
+            let value = if row == Row::MusicDir {
+                self.ui.font.truncate_start(&value, ui::FONT_SMALL, 260)
+            } else if selected {
+                format!("<  {value}  >")
+            } else {
+                value
+            };
+            self.ui.row(c, i - first, row.label(), selected, Some(&value), false);
         }
-        // Help for the selected row, word-wrapped at the bottom.
+        self.ui.scroll_marks(c, first, VISIBLE_ROWS, self.rows.len());
+        // Help for the selected row, under the list.
         if let Some(row) = self.rows.get(self.sel) {
-            let top = H as i32 - LINE - 4 - 4 * 12;
-            c.rect(MARGIN, top - 8, W as i32 - 2 * MARGIN, 1, KEY_BG);
-            let mut lines = vec![String::new()];
-            for word in row.help().split(' ') {
-                let cur = lines.last_mut().unwrap();
-                if !cur.is_empty() && cur.len() + 1 + word.len() > 76 {
-                    lines.push(word.to_string());
-                } else {
-                    if !cur.is_empty() {
-                        cur.push(' ');
-                    }
-                    cur.push_str(word);
-                }
-            }
-            for (i, l) in lines.iter().take(4).enumerate() {
-                c.text(MARGIN, top + i as i32 * 12, l, 1, DIM);
+            let y0 = Ui::row_y(VISIBLE_ROWS) + ui::PADDING / 2;
+            let lh = self.ui.font.height(ui::FONT_TINY) + 2;
+            let max = W as i32 - 2 * ui::PADDING - 2 * ui::BUTTON_PADDING;
+            for (k, line) in self.ui.font.wrap(row.help(), ui::FONT_TINY, max).iter().take(2).enumerate() {
+                self.ui.font.draw(c, ui::PADDING + ui::BUTTON_PADDING, y0 + k as i32 * lh, line, ui::FONT_TINY, ui::GRAY);
             }
         }
-    }
-
-    fn draw_keyboard(&self, c: &mut Canvas, kb: &Keyboard) {
-        Self::title(c, "Music folder");
-        let box_y = LINE + 12;
-        c.rect(MARGIN, box_y, W as i32 - 2 * MARGIN, 28, 0xFFFFFF);
-        c.rect(MARGIN, box_y + 27, W as i32 - 2 * MARGIN, 2, SEL_BG);
-        let end = c.text(MARGIN + 6, box_y + 6, &fit_end(&kb.text, COLS - 2), 2, FG);
-        if (self.time * 2.0) as i32 % 2 == 0 {
-            c.rect(end + 1, box_y + 4, 2, 20, SEL_BG);
+        if let Some(m) = self.flash_text() {
+            self.ui.toast(c, m);
         }
-        let (kw, kh, gap) = (56, 44, 4);
-        let x0 = (W as i32 - (KB_COLS as i32 * (kw + gap) - gap)) / 2;
-        let y0 = box_y + 44;
-        for row in 0..KB_ROWS {
-            for col in 0..KB_COLS {
-                let x = x0 + col as i32 * (kw + gap);
-                let y = y0 + row as i32 * (kh + gap);
-                let selected = row == kb.row && col == kb.col;
-                c.rect(x, y, kw, kh, if selected { SEL_BG } else { KEY_BG });
-                c.glyph(x + (kw - 16) / 2, y + (kh - 16) / 2, kb.key_at(row, col), 2, if selected { SEL_FG } else { FG });
-            }
-        }
-        let hints = [
-            format!("A type B delete Y space X {}", PAGE_NAMES[(kb.page + 1) % PAGE_NAMES.len()]),
-            "L1 clear START save SELECT back".to_string(),
-        ];
-        let hy = y0 + KB_ROWS as i32 * (kh + gap) + 8;
-        for (i, h) in hints.iter().enumerate() {
-            c.text(MARGIN, hy + i as i32 * LINE, &fit(h, COLS), 2, DIM);
-        }
+        let action = match self.rows.get(self.sel) {
+            Some(Row::MusicDir) => "EDIT",
+            Some(Row::ScreenOff | Row::Brightness | Row::Search) => "NEXT",
+            _ => "TOGGLE",
+        };
+        self.ui.hints(c, &[("B", "BACK")], false);
+        self.ui.hints(c, &[("A", action)], true);
     }
 }
 
@@ -461,11 +420,15 @@ impl minui_common::App for App {
     fn render(&self, canvas: &mut Canvas) {
         App::render(self, canvas);
     }
+    fn quit(&self) -> bool {
+        self.quitting
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use minui_common::render::H;
 
     fn sandbox(name: &str, with_560p: bool) -> (App, PathBuf) {
         let dir = env::temp_dir().join(format!("settings_app_{}_{name}", std::process::id()));

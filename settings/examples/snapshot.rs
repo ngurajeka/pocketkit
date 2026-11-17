@@ -37,6 +37,19 @@ fn main() {
         out.extend_from_slice(&[(p >> 16) as u8, (p >> 8) as u8, p as u8]);
     }
     fs::write("snapshots/settings.ppm", out).unwrap();
+
+    // The music-folder keyboard.
+    for _ in 0..5 {
+        app.handle(Button::Down);
+    }
+    app.handle(Button::A);
+    app.handle(Button::Right);
+    app.render(&mut c);
+    let mut out = format!("P6\n{} {}\n255\n", c.w, c.h).into_bytes();
+    for &p in &c.px {
+        out.extend_from_slice(&[(p >> 16) as u8, (p >> 8) as u8, p as u8]);
+    }
+    fs::write("snapshots/keyboard.ppm", out).unwrap();
     let _ = fs::remove_dir_all(&dir);
     println!("wrote snapshots/settings.ppm");
 }
